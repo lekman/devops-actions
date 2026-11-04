@@ -50,13 +50,7 @@ export interface ReleaseMatrixEntry {
 }
 
 export type Language =
-  | "node"
-  | "python"
-  | "docker"
-  | "helm"
-  | "kotlin"
-  | "powershell"
-  | "unknown";
+  "node" | "python" | "docker" | "helm" | "kotlin" | "powershell" | "unknown";
 
 export interface ReleaseMatrix {
   entries: ReleaseMatrixEntry[];
