@@ -1,0 +1,73 @@
+# Reports which languages the checked-out repository declares, and for
+# Python which package manager owns it, which interpreter it pins, and
+# which CI phases its pyproject.toml configures.
+#
+# Callers gate their per-language steps on these outputs, so a TypeScript
+# repo runs no Python steps and a Python repo runs no bun steps.
+#
+# Logic lives in packages/devops-actions/src/language-detect.ts and is
+# compiled into dist/ by the package build step.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#
+# A repo declaring no manifest at all is not an error. Every output comes
+# back false or empty, and every step gated on them is skipped.
+
+name: Detect Language
+description: >-
+  Detect the languages a repository declares, plus Python package manager,
+  interpreter version, and configured phases. Requires a prior checkout.
+
+inputs:
+  working-directory:
+    description: Directory holding the manifests, repository-relative.
+    required: false
+    default: "."
+
+outputs:
+  languages:
+    description: 'Comma-separated detected languages, e.g. "node,python". Empty when none.'
+    value: ${{ steps.detect.outputs.languages }}
+  has-node:
+    description: '"true" when package.json is present.'
+    value: ${{ steps.detect.outputs.has-node }}
+  has-python:
+    description: '"true" when pyproject.toml or setup.py is present.'
+    value: ${{ steps.detect.outputs.has-python }}
+  python-pm:
+    description: >-
+      Package manager owning the Python project: pip, pipenv, poetry, or uv.
+      Empty when no Python was detected.
+    value: ${{ steps.detect.outputs.python-pm }}
+  python-version:
+    description: >-
+      Interpreter version from .python-version, or from requires-python with
+      its specifier stripped. Empty when the repo pins neither.
+    value: ${{ steps.detect.outputs.python-version }}
+  python-has-build:
+    description: '"true" when pyproject declares a [build-system] and is not a poetry package-mode = false root.'
+    value: ${{ steps.detect.outputs.python-has-build }}
+  python-has-test:
+    description: '"true" when pyproject configures pytest or a tests/ directory exists.'
+    value: ${{ steps.detect.outputs.python-has-test }}
+  python-has-lint:
+    description: '"true" when pyproject configures ruff, black, flake8, or pylint.'
+    value: ${{ steps.detect.outputs.python-has-lint }}
+  python-has-typecheck:
+    description: '"true" when pyproject configures mypy.'
+    value: ${{ steps.detect.outputs.python-has-typecheck }}
+  python-lint-tools:
+    description: 'Comma-separated configured lint tools, in run order, e.g. "ruff,black".'
+    value: ${{ steps.detect.outputs.python-lint-tools }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect languages
+      id: detect
+      shell: bash
+      run: |
+        set -euo pipefail
+        node "${{ github.action_path }}/dist/language-detect.js" \
+          --root "${{ inputs.working-directory }}"

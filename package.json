@@ -1,0 +1,22 @@
+{
+  "name": "@lekman/devops-actions-root",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "cd packages/devops-actions && bun run build",
+    "lint": "cd packages/devops-actions && bun run lint",
+    "typecheck": "cd packages/devops-actions && bun run typecheck",
+    "test": "cd packages/devops-actions && bun test"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lekman/devops-actions.git"
+  },
+  "devDependencies": {
+    "prettier": "3.8.2"
+  }
+}

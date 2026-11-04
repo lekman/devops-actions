@@ -1,0 +1,152 @@
+# Enumerates tagged versions that are missing from the package registry.
+#
+# Walks every package declared in release-please-config.json, lists git
+# tags matching the package's component prefix (e.g. `devops-toolkit@v*`
+# or `devops-toolkit-tasks@v*`), and for each tag checks whether the
+# corresponding version is already present on the configured registry.
+# Missing versions go into the drift matrix — one entry per unpublished
+# tag — which the `publish-drift` job then fans out over.
+#
+# Intended to run on `workflow_dispatch` as a backstop for cases where
+# the normal `release.yml` happy path ran (tag created) but `publish`
+# silently skipped (e.g. matrix output empty due to an older workflow).
+#
+# Pure bash — no dist dependency. The logic is narrow on purpose: only
+# handles npm packages, uses `npm view` for registry probing. Expansion
+# to other languages can reuse the same action.yml with a language
+# switch if needed.
+
+name: Drift Matrix
+description: >-
+  Enumerate release-please-tagged versions that are missing from the
+  package registry; emit a matrix for a downstream publish job.
+
+inputs:
+  config-file:
+    description: >-
+      Path to release-please-config.json. Leave empty to detect it under
+      `.release/`, then `release/`.
+    required: false
+    default: ""
+  repo-root:
+    description: Repository root used to read tags and package.json content.
+    required: false
+    default: ${{ github.workspace }}
+  registry:
+    description: Default npm registry to probe (overridable per-package via publishConfig.registry).
+    required: false
+    default: https://registry.npmjs.org
+  token:
+    description: Token with read access to the registry (usually NPM_TOKEN).
+    required: true
+
+outputs:
+  matrix:
+    description: JSON array of drift entries — one per unpublished tag.
+    value: ${{ steps.build.outputs.matrix }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build drift matrix
+      id: build
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config-file }}
+        REPO_ROOT: ${{ inputs.repo-root }}
+        REGISTRY: ${{ inputs.registry }}
+        NPM_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$CONFIG_FILE" ]; then
+          for dir in .release release; do
+            if [ -f "$REPO_ROOT/$dir/release-please-config.json" ]; then
+              CONFIG_FILE="$dir/release-please-config.json"
+              break
+            fi
+          done
+        fi
+        if [ -z "$CONFIG_FILE" ]; then
+          echo "::error::No release-please-config.json under .release/ or release/, and config-file not given"
+          exit 1
+        fi
+
+        REGISTRY_HOST="${REGISTRY#https://}"
+        REGISTRY_HOST="${REGISTRY_HOST#http://}"
+        {
+          printf '//%s/:_authToken=%s\n' "$REGISTRY_HOST" "$NPM_TOKEN"
+          echo "@lekman:registry=$REGISTRY"
+        } > ~/.npmrc
+
+        cd "$REPO_ROOT"
+
+        # Ensure we have all tags (consumer workflow should use fetch-depth: 0
+        # but be defensive).
+        git fetch --tags --quiet || true
+
+        drift='[]'
+        total_checked=0
+        total_missing=0
+
+        # Iterate each package path declared in the config.
+        while IFS=$'\t' read -r pkg_path pkg_name; do
+          [ -z "$pkg_path" ] && continue
+
+          # Derive the tag component. If the config declares a component,
+          # use it; otherwise fall back to the path's basename (release-please
+          # default when include-component-in-tag: true).
+          component=$(jq -r --arg p "$pkg_path" \
+            '.packages[$p].component // ($p | split("/") | last)' \
+            "$CONFIG_FILE")
+
+          # Collect tags matching either `component-v*` or `component@v*`.
+          # release-please has used both conventions across this org.
+          tags=$(git tag -l "${component}-v*" "${component}@v*" | sort -V)
+          [ -z "$tags" ] && continue
+
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            total_checked=$((total_checked + 1))
+
+            # Extract version from the tag.
+            version="${tag#${component}-v}"
+            version="${version#${component}@v}"
+
+            # Read package.json AT THIS TAG — the historical content is
+            # what we'd publish, not whatever HEAD currently says.
+            pkg_json=$(git show "${tag}:${pkg_path}/package.json" 2>/dev/null || true)
+            [ -z "$pkg_json" ] && continue
+
+            is_private=$(echo "$pkg_json" | jq -r '.private // false')
+            [ "$is_private" = "true" ] && continue
+
+            # Registry override from publishConfig.
+            pkg_registry=$(echo "$pkg_json" | jq -r '.publishConfig.registry // empty')
+            effective_registry="${pkg_registry:-$REGISTRY}"
+
+            # Probe the registry. `npm view` exits 0 when the version exists.
+            if npm view "${pkg_name}@${version}" version \
+                 --registry="$effective_registry" >/dev/null 2>&1; then
+              continue
+            fi
+
+            has_build=$(echo "$pkg_json" \
+              | jq -r 'if (.scripts.build // "") != "" then true else false end')
+
+            drift=$(echo "$drift" | jq \
+              --arg n "$pkg_name" \
+              --arg p "$pkg_path" \
+              --arg t "$tag" \
+              --arg v "$version" \
+              --argjson b "$has_build" \
+              --arg r "$effective_registry" \
+              '. + [{name: $n, path: $p, tag: $t, version: $v, publishable: true, hasBuild: $b, registry: $r}]')
+            total_missing=$((total_missing + 1))
+            echo "::notice::Drift detected: ${pkg_name}@${version} (tag ${tag})"
+          done <<< "$tags"
+        done < <(jq -r '.packages | to_entries[] | "\(.key)\t\(.value["package-name"])"' "$CONFIG_FILE")
+
+        matrix_json=$(echo "$drift" | jq -c .)
+        echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
+        echo "::notice::Drift check complete — $total_checked tag(s) checked, $total_missing missing from registry"

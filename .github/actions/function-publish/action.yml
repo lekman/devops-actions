@@ -1,0 +1,148 @@
+# Publishes a Python Azure Functions project to a Flex Consumption app.
+#
+# One deploy is the only deployment path on Flex Consumption (Microsoft
+# Learn, "Deployment technologies in Azure Functions"): the CLI uploads the
+# project as a zip through the app's SCM site and the platform builds it,
+# stores the package in the app's deployment container and restarts the app.
+# So the runner's address must be on the app's inbound allow-list, and the
+# job needs no storage permission of its own; the app writes its own
+# container with its own identity.
+#
+# Prerequisites:
+#   - The repository is checked out, and setup-runtime and python-deps have
+#     run, so the audit before this step saw the real dependency set.
+#   - ARM_CLIENT_ID, ARM_TENANT_ID and ARM_SUBSCRIPTION_ID are in the
+#     environment and the job has id-token: write. The identity holds
+#     Contributor on the app's resource group.
+#
+# The package is the project root minus what never belongs in a function
+# (tests, caches, virtual environments, editor and repository metadata).
+# The platform installs dependencies from the project's own manifest during
+# the remote build, which is what Microsoft recommends for Python so the
+# wheels match the Linux host rather than the machine that packaged them.
+
+name: Function Publish
+description: >-
+  Zip a Python Azure Functions project and publish it to a Flex Consumption
+  app with One deploy and a remote build. Requires setup-runtime and
+  python-deps first, and Azure OIDC variables in the environment.
+
+inputs:
+  working-directory:
+    description: Project directory, repository-relative. Holds function_app.py.
+    required: false
+    default: "."
+  app-name:
+    description: The function app to publish to.
+    required: true
+  resource-group:
+    description: The resource group holding the function app.
+    required: true
+  exclude:
+    description: >-
+      Paths to leave out of the package, one glob per line, relative to the
+      project directory. Added to the built-in list of tests, caches,
+      virtual environments and repository metadata.
+    required: false
+    default: ""
+  build-remote:
+    description: >-
+      Ask the platform to build the package on the Linux host. "true" for
+      Python, which Microsoft recommends; "false" only for a package that is
+      already ready to run.
+    required: false
+    default: "true"
+
+outputs:
+  functions:
+    description: The functions the app reports after the publish, one per line.
+    value: ${{ steps.verify.outputs.functions }}
+
+runs:
+  using: composite
+  steps:
+    - name: Package the project
+      id: package
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        EXTRA_EXCLUDE: ${{ inputs.exclude }}
+      run: |
+        set -euo pipefail
+        if [ ! -f function_app.py ] && [ ! -f host.json ]; then
+          echo "::error::${PWD} has neither function_app.py nor host.json, so it is not an Azure Functions project. Nothing was published." >&2
+          exit 1
+        fi
+        ZIP="${RUNNER_TEMP}/function-package.zip"
+        rm -f "$ZIP"
+        # Everything a running function never reads. The remote build
+        # installs dependencies from the manifest, so no environment ships.
+        excludes=(
+          ".git/*" ".github/*" ".venv/*" "venv/*" "node_modules/*"
+          "tests/*" "test/*" "docs/*"
+          "*/__pycache__/*" "__pycache__/*" "*.pyc"
+          ".mypy_cache/*" ".ruff_cache/*" ".pytest_cache/*" "htmlcov/*"
+          ".coverage" "coverage.xml" ".env" ".env.*" "*.local.settings.json"
+        )
+        while IFS= read -r line; do
+          [ -n "$line" ] && excludes+=("$line")
+        done <<< "$EXTRA_EXCLUDE"
+        zip -q -r "$ZIP" . -x "${excludes[@]}"
+        size=$(wc -c < "$ZIP" | tr -d ' ')
+        count=$(unzip -l "$ZIP" | tail -1 | awk '{print $2}')
+        echo "Packaged ${count} files, ${size} bytes"
+        echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+    - name: Azure OIDC login
+      uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3
+      with:
+        client-id: ${{ env.ARM_CLIENT_ID }}
+        tenant-id: ${{ env.ARM_TENANT_ID }}
+        subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+    - name: Publish with One deploy
+      shell: bash
+      env:
+        APP_NAME: ${{ inputs.app-name }}
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+        ZIP: ${{ steps.package.outputs.zip }}
+        BUILD_REMOTE: ${{ inputs.build-remote }}
+      run: |
+        set -euo pipefail
+        az functionapp deployment source config-zip \
+          --resource-group "$RESOURCE_GROUP" \
+          --name "$APP_NAME" \
+          --src "$ZIP" \
+          --build-remote "$BUILD_REMOTE" \
+          --output none
+
+    # A publish that succeeded but left the app with no functions is a
+    # package that had none the host could load. An empty list here is a
+    # failure, never a quiet pass.
+    - name: Verify the app reports its functions
+      id: verify
+      shell: bash
+      env:
+        APP_NAME: ${{ inputs.app-name }}
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+      run: |
+        set -euo pipefail
+        functions=""
+        for attempt in 1 2 3 4 5 6; do
+          functions=$(az functionapp function list \
+            --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
+            --query "[].name" -o tsv 2>/dev/null || true)
+          [ -n "$functions" ] && break
+          sleep 10
+        done
+        if [ -z "$functions" ]; then
+          echo "::error::${APP_NAME} reports no functions after the publish. The package was accepted but the host loaded nothing from it; check the deployment log under Diagnose and solve problems > Flex Consumption Deployment." >&2
+          exit 1
+        fi
+        echo "Functions in ${APP_NAME}:"
+        printf '%s\n' "$functions" | sed 's/^/  /'
+        {
+          echo "functions<<FUNCTIONS"
+          printf '%s\n' "$functions"
+          echo "FUNCTIONS"
+        } >> "$GITHUB_OUTPUT"

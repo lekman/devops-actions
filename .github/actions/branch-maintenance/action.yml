@@ -1,0 +1,37 @@
+# Scans open PRs and updates stale branches or comments on conflicted ones.
+#
+# Logic lives in packages/devops-actions/src/branch-maintenance.ts and is
+# compiled into dist/ by the package build step.
+#
+# Modes:
+#   - Single repo: set GITHUB_REPOSITORY env var (used by CI branch-check)
+#   - Org sweep: set SWEEP_ORG=true + GITHUB_ORG env var (used by cron)
+
+name: Branch Maintenance
+description: >-
+  Detect stale or conflicted PR branches and auto-update or comment.
+  Uses the compare API for reliable behind detection.
+
+inputs:
+  github-token:
+    description: Token with contents:write and pull-requests:write
+    required: true
+  mode:
+    description: '"repo" for single repo, "org" for org sweep'
+    required: false
+    default: "repo"
+  org:
+    description: GitHub org or user name (only used in org mode)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Run branch maintenance
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_ORG: ${{ inputs.org }}
+        SWEEP_ORG: ${{ inputs.mode == 'org' && 'true' || '' }}
+      run: node ${{ github.action_path }}/dist/branch-maintenance.js

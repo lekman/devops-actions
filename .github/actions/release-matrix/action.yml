@@ -1,0 +1,70 @@
+# Builds a matrix of released packages from release-please-action outputs.
+#
+# Pass the entire outputs object via `release-outputs` (usually
+# `toJson(steps.<release>.outputs)`) and the action emits:
+#   - matrix:           JSON array of { name, path, tag, version, releaseType,
+#                                       language, publishable, hasBuild, registry }
+#   - releases_created: "true" / "false"
+#
+# Drift (released paths not listed in the config) is surfaced as
+# `::warning::` annotations — doesn't fail the step.
+#
+# Logic lives in packages/devops-actions/src/release-matrix.ts and is
+# compiled into dist/ by the package build step.
+
+name: Release Please Matrix
+description: >-
+  Parse release-please outputs into a structured matrix of released
+  packages, with per-entry publish + evidence metadata.
+
+inputs:
+  release-outputs:
+    description: >-
+      JSON-stringified release-please outputs object (the entire
+      `steps.<release>.outputs` record from release-please-action).
+    required: true
+  config-file:
+    description: >-
+      Path to release-please-config.json. Leave empty to detect it under
+      `.release/`, then `release/`.
+    required: false
+    default: ""
+  repo-root:
+    description: Repository root used to probe package.json / Dockerfile / etc.
+    required: false
+    default: ${{ github.workspace }}
+
+outputs:
+  matrix:
+    description: JSON array of released package entries.
+    value: ${{ steps.run.outputs.matrix }}
+  releases_created:
+    description: "true when at least one release was cut this run."
+    value: ${{ steps.run.outputs.releases_created }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build release matrix
+      id: run
+      shell: bash
+      env:
+        RELEASE_OUTPUTS: ${{ inputs.release-outputs }}
+      run: |
+        CONFIG_FILE="${{ inputs.config-file }}"
+        if [ -z "$CONFIG_FILE" ]; then
+          for dir in .release release; do
+            if [ -f "${{ inputs.repo-root }}/$dir/release-please-config.json" ]; then
+              CONFIG_FILE="$dir/release-please-config.json"
+              break
+            fi
+          done
+        fi
+        if [ -z "$CONFIG_FILE" ]; then
+          echo "::error::No release-please-config.json under .release/ or release/, and config-file not given"
+          exit 1
+        fi
+        node "${{ github.action_path }}/dist/release-matrix.js" \
+          --release-outputs "$RELEASE_OUTPUTS" \
+          --config-file "$CONFIG_FILE" \
+          --repo-root "${{ inputs.repo-root }}"

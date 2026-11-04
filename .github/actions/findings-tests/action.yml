@@ -1,0 +1,57 @@
+# Parses JUnit XML plus a coverage report emitted by a test run and writes
+# a compact markdown summary to `out-path`. The caller uploads the result as a
+# workflow artifact named `findings-<job>` for consumption by quality-gate.
+#
+# Logic lives in packages/devops-actions/src/findings-tests.ts and is
+# compiled into dist/ by the package build step.
+#
+# Inputs are optional — missing files are skipped, partial results are
+# still emitted. When neither input yields parseable content the action
+# writes nothing and exits 0.
+
+name: Findings — Tests
+description: >-
+  Parse JUnit XML plus LCOV or Cobertura coverage into a compact markdown
+  summary for embedding inside the quality-gate PR comment.
+
+inputs:
+  junit-path:
+    description: Path to JUnit XML output from bun test / jest / vitest / pytest.
+    required: false
+    default: junit.xml
+  lcov-path:
+    description: Path to LCOV info file (e.g. coverage/lcov.info).
+    required: false
+    default: coverage/lcov.info
+  coverage-xml-path:
+    description: >-
+      Path to a Cobertura XML coverage report, as pytest-cov and coverage.py
+      write. Read only when no LCOV file is present, so a repo emitting both
+      keeps the LCOV numbers it has always reported.
+    required: false
+    default: coverage.xml
+  lint-log:
+    description: Path to captured lint step output (ESLint stylish, Biome, or generic format).
+    required: false
+    default: ""
+  typecheck-log:
+    description: Path to captured typecheck step output (tsc format).
+    required: false
+    default: ""
+  out-path:
+    description: Absolute path to write the findings markdown to.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Generate quality findings
+      shell: bash
+      env:
+        LINT_LOG: ${{ inputs.lint-log }}
+        TYPECHECK_LOG: ${{ inputs.typecheck-log }}
+      run: |
+        ARGS=(--junit "${{ inputs.junit-path }}" --lcov "${{ inputs.lcov-path }}" --coverage-xml "${{ inputs.coverage-xml-path }}" --out "${{ inputs.out-path }}")
+        [ -n "$LINT_LOG" ] && ARGS+=(--lint-log "$LINT_LOG")
+        [ -n "$TYPECHECK_LOG" ] && ARGS+=(--typecheck-log "$TYPECHECK_LOG")
+        node "${{ github.action_path }}/dist/findings-tests.js" "${ARGS[@]}"

@@ -1,0 +1,195 @@
+# Installs a Python project's package manager and its dependencies, plus
+# pip-audit for the later audit step.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - A Python interpreter must be on PATH. Run setup-runtime first; it
+#     installs the version the repository pins.
+#
+# The package manager comes from the detect-language action, not from a
+# guess here. Which one it is decides both how dependencies install and how
+# every later tool call is invoked, because poetry, pipenv and uv each
+# create a virtualenv that is never activated on a runner — their tools are
+# reached through `<pm> run <tool>` rather than from PATH.
+#
+# Tool install order matters. pip-audit goes in last, after the interpreter
+# is settled, because a pipx venv built against a Python that a later step
+# shadows leaves a binary whose shebang points at nothing. That surfaces as
+# exit 127 from the audit step, a long way from its cause.
+
+name: Python Dependencies
+description: >-
+  Install a Python package manager, the project's dependencies, and
+  pip-audit. Requires a prior checkout and a Python interpreter on PATH.
+
+inputs:
+  package-manager:
+    description: "One of pip, pipenv, poetry, uv. From the detect-language action."
+    required: true
+  working-directory:
+    description: Project directory, repository-relative.
+    required: false
+    default: "."
+  install-pip-audit:
+    description: >-
+      Install pip-audit for the dependency-audit step. Set "false" to skip
+      it in jobs that only build, lint or test.
+    required: false
+    default: "true"
+  registry-token:
+    description: >-
+      Token used as the Git credential for private dependencies cloned over
+      HTTPS during the install. Scoped to the install step and removed
+      afterwards. Empty leaves Git configuration untouched.
+    required: false
+    default: ""
+
+outputs:
+  package-manager:
+    description: The package manager that was installed and used.
+    value: ${{ inputs.package-manager }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install the package manager
+      shell: bash
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      run: |
+        set -euo pipefail
+
+        if [ "$PACKAGE_MANAGER" = "pip" ]; then
+          echo "::notice title=Python Dependencies::pip needs no bootstrap"
+          exit 0
+        fi
+
+        case "$PACKAGE_MANAGER" in
+          pipenv|poetry|uv) ;;
+          *)
+            echo "::error title=Python Dependencies::unknown package manager '$PACKAGE_MANAGER'. Expected pip, pipenv, poetry, or uv."
+            exit 1
+            ;;
+        esac
+
+        # mise first, so the package manager is version-managed the same way
+        # the interpreter is. `mise install` deliberately writes no config —
+        # `mise use` would create a mise.toml in the checkout, and on a
+        # self-hosted runner `--global` would leak the tool into the next
+        # job. Putting the install's own bin dir on PATH keeps the effect
+        # scoped to this job.
+        if command -v mise >/dev/null 2>&1; then
+          if mise install "${PACKAGE_MANAGER}@latest"; then
+            if bin_dir="$(mise where "${PACKAGE_MANAGER}@latest")/bin" \
+               && [ -d "$bin_dir" ]; then
+              echo "$bin_dir" >> "$GITHUB_PATH"
+              echo "::notice title=Python Dependencies::$PACKAGE_MANAGER installed by mise"
+              exit 0
+            fi
+          fi
+          echo "::warning title=Python Dependencies::mise could not install $PACKAGE_MANAGER; falling back to pipx"
+        fi
+
+        if command -v pipx >/dev/null 2>&1; then
+          pipx install "$PACKAGE_MANAGER"
+          pipx_bin="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+          if [ -n "$pipx_bin" ]; then
+            echo "$pipx_bin" >> "$GITHUB_PATH"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "::notice title=Python Dependencies::$PACKAGE_MANAGER installed by pipx"
+          exit 0
+        fi
+
+        python -m pip install --user "$PACKAGE_MANAGER"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        echo "::notice title=Python Dependencies::$PACKAGE_MANAGER installed by pip --user"
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        # Only meaningful when the caller supplies one. Leaving it empty
+        # keeps the askpass branch from firing with the runner's own
+        # ephemeral token, which cannot read private repositories anyway.
+        GIT_PASSWORD: ${{ inputs.registry-token }}
+      run: |
+        set -euo pipefail
+
+        # Private Git dependency auth, scoped to this step. The env vars,
+        # the askpass script and the URL rewrite are all removed before the
+        # step ends, so nothing leaks into the steps that follow.
+        if [ -n "$GIT_PASSWORD" ]; then
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+          ASKPASS="${RUNNER_TEMP}/git-askpass.sh"
+          # shellcheck disable=SC2016
+          # The single quotes are the point. The script must hold the literal
+          # $GIT_PASSWORD and read it from the environment when git runs it.
+          # Expanding here would write the token into a file on disk.
+          printf '#!/bin/sh\necho "${GIT_PASSWORD}"\n' > "$ASKPASS"
+          chmod +x "$ASKPASS"
+          export GIT_ASKPASS="$ASKPASS"
+        fi
+
+        cleanup() {
+          rm -f "${RUNNER_TEMP}/git-askpass.sh"
+          git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true
+        }
+        trap cleanup EXIT
+
+        case "$PACKAGE_MANAGER" in
+          poetry)
+            poetry install --no-interaction
+            ;;
+          uv)
+            uv sync
+            ;;
+          pipenv)
+            pipenv install --deploy --dev
+            ;;
+          pip)
+            # An editable install with the dev extra is the usual shape for
+            # a pyproject-based project. A project that declares no `dev`
+            # extra still installs from its pyproject, and requirements.txt
+            # covers projects that keep dependencies there instead. Reaching
+            # the end is not an error — a project may genuinely have no
+            # dependencies — but say so rather than passing silently.
+            if [ -f pyproject.toml ] && pip install -e ".[dev]"; then
+              :
+            elif [ -f pyproject.toml ] && pip install -e .; then
+              :
+            elif [ -f requirements.txt ]; then
+              pip install -r requirements.txt
+            else
+              echo "::notice title=Python Dependencies::nothing installed (no pyproject.toml that pip could build, no requirements.txt)"
+            fi
+            ;;
+        esac
+
+    - name: Install pip-audit
+      if: inputs.install-pip-audit == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if command -v pipx >/dev/null 2>&1; then
+          pipx install pip-audit
+          # Ask pipx where its bin dir is rather than guessing. Runner
+          # images use /opt/pipx_bin; a user install lands under
+          # ~/.local/bin. Both are appended as well, so `pip-audit`
+          # resolves whichever pipx version is present.
+          pipx_bin="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+          if [ -n "$pipx_bin" ]; then
+            echo "$pipx_bin" >> "$GITHUB_PATH"
+          fi
+          echo "/opt/pipx_bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          pipx ensurepath || true
+          exit 0
+        fi
+
+        python -m pip install --user pip-audit
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"

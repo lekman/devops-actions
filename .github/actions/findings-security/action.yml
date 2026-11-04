@@ -1,0 +1,41 @@
+# Parses Semgrep JSON output and writes a markdown summary with a
+# findings table for embedding inside the Security Gate <details> body.
+#
+# Logic lives in packages/devops-actions/src/findings-security.ts and
+# is compiled into dist/ by the package build step.
+#
+# Findings are severity-sorted (ERROR > WARNING > INFO) and capped at
+# 20 rows. When the full count exceeds the cap, the markdown includes
+# a note linking to the SARIF artifact.
+
+name: Findings — Security
+description: >-
+  Parse Semgrep JSON into a markdown summary table for embedding
+  inside the quality-gate PR comment's Security Gate section.
+
+inputs:
+  semgrep-json-path:
+    description: Path to Semgrep JSON output file.
+    required: false
+    default: ""
+  gitleaks-json-path:
+    description: Path to Gitleaks JSON output file.
+    required: false
+    default: ""
+  out-path:
+    description: Absolute path to write the findings markdown to.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Generate security findings
+      shell: bash
+      env:
+        SEMGREP_JSON: ${{ inputs.semgrep-json-path }}
+        GITLEAKS_JSON: ${{ inputs.gitleaks-json-path }}
+      run: |
+        ARGS=(--out "${{ inputs.out-path }}")
+        [ -n "$SEMGREP_JSON" ] && ARGS+=(--json "$SEMGREP_JSON")
+        [ -n "$GITLEAKS_JSON" ] && ARGS+=(--gitleaks "$GITLEAKS_JSON")
+        node "${{ github.action_path }}/dist/findings-security.js" "${ARGS[@]}"

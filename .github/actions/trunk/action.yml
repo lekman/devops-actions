@@ -1,0 +1,29 @@
+# Runs all Trunk-managed linters (shellcheck, shfmt, yamllint, markdownlint,
+# actionlint, hadolint, checkov, osv-scanner, trufflehog, prettier) on the
+# PR diff or last commit. Posts inline annotations via the Checks API.
+#
+# Prerequisites:
+#   - The repository must already be checked out with fetch-depth: 0
+#     (Trunk needs the base commit to compute the PR diff).
+#   - The calling job must have checks: write permission for annotations.
+
+name: Trunk Check
+description: >-
+  Run Trunk-managed linters. Requires a prior checkout with fetch-depth: 0
+  and checks: write permission on the calling job.
+
+inputs:
+  check-mode:
+    description: '"pull_request" for PR diff, "push" for last commit'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Trunk check
+      # v1 at 2026-05-14. Every action trunk-action calls internally is pinned
+      # to a SHA from this commit on, which an organisation that requires SHA
+      # pinning checks transitively; the previous pin called actions/checkout@v4.
+      uses: trunk-io/trunk-action@04ba50e7658c81db7356da96657e6e77f220bfa3 # v1 2026-05-14
+      with:
+        check-mode: ${{ inputs.check-mode }}

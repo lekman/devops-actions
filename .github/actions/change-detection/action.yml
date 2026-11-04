@@ -1,0 +1,60 @@
+# Detects which areas of a monorepo have changed using dorny/paths-filter.
+# Returns boolean outputs for each filter group, used by downstream jobs
+# to decide whether to run deploy pipelines, builds, or previews.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - The calling job must have pull-requests: read permission.
+
+name: Change Detection
+description: >-
+  Detect file changes using configurable path filters.
+  Requires a prior checkout step and pull-requests: read permission.
+
+inputs:
+  filters:
+    description: >-
+      YAML-format dorny/paths-filter filter definitions.
+      Default detects infra/ and service/package changes.
+    required: false
+    default: |
+      infra:
+        - 'infra/**'
+      service:
+        - 'services/**'
+        - 'packages/**'
+        - 'apps/**'
+        - 'src/**'
+        - 'bun.lock'
+        - 'pyproject.toml'
+        - 'poetry.lock'
+        - 'uv.lock'
+        - 'Pipfile.lock'
+        - 'requirements*.txt'
+      package:
+        - 'packages/**'
+      app:
+        - 'apps/**'
+
+outputs:
+  infra:
+    description: '"true" if infra/ changed (defaults to "true" if detection fails)'
+    value: ${{ steps.filter.outputs.infra || 'true' }}
+  service:
+    description: '"true" if any service, package, app, or lockfile changed'
+    value: ${{ steps.filter.outputs.service || 'true' }}
+  package:
+    description: '"true" if packages/** changed'
+    value: ${{ steps.filter.outputs.package || 'false' }}
+  app:
+    description: '"true" if apps/** changed'
+    value: ${{ steps.filter.outputs.app || 'false' }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect changes
+      uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+      id: filter
+      with:
+        filters: ${{ inputs.filters }}

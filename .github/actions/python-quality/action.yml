@@ -1,0 +1,187 @@
+# Runs lint, typecheck and test for a Python project, capturing each tool's
+# output where the findings-tests action can read it.
+#
+# Mirrors the Node path in ci.yml: every phase runs even when an earlier one
+# fails, and the step exits non-zero at the end if any of them did. Seeing
+# only the first failure per run turns one red build into three.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - setup-runtime and python-deps must have run, so the interpreter, the
+#     package manager and the project's dependencies are all present.
+#
+# Which phases run comes from the detect-language action, so a project that
+# configures no mypy runs no typecheck rather than failing on a missing
+# tool. A phase whose tool is configured but absent from the environment is
+# reported as skipped, not as a failure — that is a setup gap, and dressing
+# it up as red lint findings sends people to fix the wrong thing.
+
+name: Python Quality
+description: >-
+  Run ruff, black, mypy and pytest for a Python project and capture their
+  output for the quality gate. Requires setup-runtime and python-deps first.
+
+inputs:
+  package-manager:
+    description: "One of pip, pipenv, poetry, uv. From the detect-language action."
+    required: true
+  lint-tools:
+    description: >-
+      Comma-separated lint tools to run, in order, e.g. "ruff,black". Empty
+      skips the lint phase.
+    required: false
+    default: ""
+  run-typecheck:
+    description: 'Run mypy. "true" when the project configures [tool.mypy].'
+    required: false
+    default: "false"
+  run-test:
+    description: 'Run pytest. "true" when the project configures tests.'
+    required: false
+    default: "false"
+  working-directory:
+    description: Project directory, repository-relative.
+    required: false
+    default: "."
+  findings-dir:
+    description: >-
+      Directory to write per-phase logs into, as lint.log, typecheck.log and
+      test.log. The findings-tests action reads them from here.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Lint, typecheck, test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        LINT_TOOLS: ${{ inputs.lint-tools }}
+        RUN_TYPECHECK: ${{ inputs.run-typecheck }}
+        RUN_TEST: ${{ inputs.run-test }}
+        FINDINGS_DIR: ${{ inputs.findings-dir }}
+      run: |
+        # No `set -e`: every phase runs, and EXIT carries the verdict.
+        set +e
+        mkdir -p "$FINDINGS_DIR"
+        EXIT=0
+
+        # poetry, pipenv and uv install into a virtualenv that is created but
+        # never activated on a runner, so their tools are reached through
+        # `<pm> run` rather than from PATH. pip installs onto the PATH the
+        # interpreter already exposes.
+        run_pm() {
+          case "$PACKAGE_MANAGER" in
+            poetry|pipenv|uv) "$PACKAGE_MANAGER" run "$@" ;;
+            *) "$@" ;;
+          esac
+        }
+
+        # Ask the tool for its version rather than matching "command not
+        # found" against output. A missing binary reads differently through
+        # each package manager's runner, and a version probe answers the
+        # question directly.
+        have_tool() {
+          run_pm "$1" --version >/dev/null 2>&1
+        }
+
+        # Keep the head of an over-long log. The parsers in findings-tests
+        # take the first findings they see and ignore any totals line, so the
+        # top of the file is the part that carries information. (A parser
+        # that reported totals would want the tail instead.)
+        cap_log() {
+          local f="$1"
+          if [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 200000 ]; then
+            head -c 200000 "$f" > "$f.capped" && mv "$f.capped" "$f"
+            echo "… log truncated at 200 kB" >> "$f"
+          fi
+        }
+
+        # ── Lint ──────────────────────────────────────────────────────────
+        if [ -n "$LINT_TOOLS" ]; then
+          : > "$FINDINGS_DIR/lint.log"
+          ran_any=0
+          IFS=',' read -ra tools <<< "$LINT_TOOLS"
+          for tool in "${tools[@]}"; do
+            case "$tool" in
+              # --output-format=concise pins the shape findings-tests parses
+              # (`path:line:col: CODE message`). ruff's default is the
+              # multi-line `full` diagnostic, which the parser does not match
+              # — verified against ruff 0.16.6, where every finding was
+              # silently dropped from the gate. Do not rely on the default.
+              ruff)  args=(check --output-format=concise .) ;;
+              black) args=(--check .) ;;
+              # flake8 and pylint are detected but not driven here: neither
+              # has a stable machine-readable default that findings-tests
+              # parses, so running them would produce a red phase with an
+              # empty findings table.
+              *)
+                echo "::notice title=Python Quality::$tool is configured but not run by this action"
+                continue
+                ;;
+            esac
+
+            if ! have_tool "$tool"; then
+              echo "::warning title=Python Quality::$tool is configured in pyproject.toml but is not installed — skipping"
+              continue
+            fi
+
+            ran_any=1
+            echo "=== $tool ===" | tee -a "$FINDINGS_DIR/lint.log"
+            run_pm "$tool" "${args[@]}" 2>&1 | tee -a "$FINDINGS_DIR/lint.log"
+            if [ "${PIPESTATUS[0]}" -ne 0 ]; then EXIT=1; fi
+          done
+
+          if [ "$ran_any" -eq 0 ]; then
+            echo "::notice title=Python Quality::no configured lint tool was available — lint skipped"
+          fi
+          cap_log "$FINDINGS_DIR/lint.log"
+        else
+          echo "::notice title=Python Quality::no lint tool configured in pyproject.toml"
+        fi
+
+        # ── Typecheck ─────────────────────────────────────────────────────
+        if [ "$RUN_TYPECHECK" = "true" ]; then
+          if have_tool mypy; then
+            run_pm mypy . 2>&1 | tee "$FINDINGS_DIR/typecheck.log"
+            if [ "${PIPESTATUS[0]}" -ne 0 ]; then EXIT=1; fi
+            cap_log "$FINDINGS_DIR/typecheck.log"
+          else
+            echo "::warning title=Python Quality::mypy is configured in pyproject.toml but is not installed — skipping"
+          fi
+        fi
+
+        # ── Test ──────────────────────────────────────────────────────────
+        if [ "$RUN_TEST" = "true" ]; then
+          if have_tool pytest; then
+            pytest_args=(--junitxml=junit.xml -v)
+            # Coverage flags are only valid when pytest-cov is importable in
+            # the project's environment; passing them without it fails the
+            # run on an unrecognised argument.
+            if run_pm python -c "import pytest_cov" >/dev/null 2>&1; then
+              # A project that configures [tool.coverage.run] has already said
+              # which packages to measure, so pass bare --cov and let it. Only
+              # fall back to --cov=. when nothing is configured, since that
+              # also measures the test files and reports a higher number than
+              # the source alone earns.
+              if grep -q '^\[tool\.coverage\.run\]' pyproject.toml 2>/dev/null; then
+                pytest_args+=(--cov)
+              else
+                pytest_args+=(--cov=.)
+              fi
+              pytest_args+=(--cov-report=xml:coverage.xml --cov-report=term-missing)
+            else
+              echo "::notice title=Python Quality::pytest-cov not installed — running tests without coverage"
+            fi
+
+            run_pm pytest "${pytest_args[@]}" 2>&1 | tee "$FINDINGS_DIR/test.log"
+            if [ "${PIPESTATUS[0]}" -ne 0 ]; then EXIT=1; fi
+            cap_log "$FINDINGS_DIR/test.log"
+          else
+            echo "::error title=Python Quality::the project configures tests but pytest is not installed"
+            EXIT=1
+          fi
+        fi
+
+        exit $EXIT

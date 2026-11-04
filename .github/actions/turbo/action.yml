@@ -1,0 +1,59 @@
+# Runs turbo tasks with GitHub Actions cache acceleration.
+# Caches both node_modules and .turbo, keyed on OS, architecture, and lockfile
+# hash. On cache hit, bun install is a no-op and turbo skips unchanged packages.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - bun must be available on PATH (pre-installed on nb-runner-arm64).
+#   - bun.lock must exist at the repo root.
+
+name: Turbo Quality
+description: >-
+  Install dependencies, restore caches, and run turbo tasks.
+  Requires a prior checkout step and bun on PATH.
+
+inputs:
+  tasks:
+    description: Space-separated turbo tasks to run
+    required: false
+    default: "build lint typecheck test:coverage"
+
+outputs:
+  deps-cache-hit:
+    description: Whether node_modules was restored from cache
+    value: ${{ steps.deps-cache.outputs.cache-hit }}
+  turbo-cache-hit:
+    description: Whether turbo cache was restored
+    value: ${{ steps.turbo-cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Dependencies cache
+      id: deps-cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: node_modules
+        key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }} # .bunfig.toml uses $GH_TOKEN for @lekman scope
+        # Consumer .npmrc files reference ${GITHUB_TOKEN} for GitHub Packages,
+        # the same convention as ci.yml's non-turbo install step. Without it
+        # the variable expands to nothing and bun waits on npm.pkg.github.com
+        # until the job is cancelled.
+        GITHUB_TOKEN: ${{ github.token }}
+      run: bun install --frozen-lockfile
+
+    - name: Turbo cache
+      id: turbo-cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .turbo
+        key: turbo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+
+    - name: Run turbo
+      shell: bash
+      run: bun x turbo run ${{ inputs.tasks }}

@@ -1,0 +1,159 @@
+# Decides whether a pull request needs a full code review, or is the kind of
+# change where a review adds nothing. Generic on purpose: nothing here mentions
+# Claude, so any workflow that wants the same "is this worth the expense?" gate
+# can consume it.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - The calling job needs pull-requests: read for the path filter.
+#
+# Fail-safe direction: every check defaults to NOT skipping. If detection breaks,
+# the review runs. Following change-detection's `|| 'true'` convention, because
+# an unnecessary review costs money and a missed one costs a bug.
+#
+# Untrusted input handling: a branch name, PR title and label are all chosen by
+# whoever opened the pull request. They are passed through `env:` and only ever
+# read as quoted shell variables, never interpolated into a script body. This is
+# the same rule approve.yml states for `github.head_ref`.
+
+name: Review Skip
+description: >-
+  Decide whether a pull request warrants a full code review. Outputs skip=true
+  with a reason when it does not. Requires a prior checkout step.
+
+inputs:
+  head-ref:
+    description: "The PR head branch name. Pass ${{ github.head_ref }}."
+    required: true
+  pr-title:
+    description: "The PR title. Pass ${{ github.event.pull_request.title }}."
+    required: true
+  pr-labels:
+    description: >-
+      JSON array of label names.
+      Pass ${{ toJSON(github.event.pull_request.labels.*.name) }}.
+    required: false
+    default: "[]"
+  skip-branch-prefixes:
+    description: >-
+      Comma-separated branch prefixes that skip review. Defaults match the two
+      sets approve.yml already auto-approves, so "auto-approved" and
+      "review-skipped" stay the same population rather than drifting apart.
+      release-please branches carry commits that were already reviewed on the
+      way to main, plus a generated changelog.
+    required: false
+    default: "dependabot/,release-please--"
+  skip-title-prefixes:
+    description: >-
+      Comma-separated Conventional Commit types that skip review. Weaker signal
+      than the branch prefixes, because the author picks the title: a
+      substantive change labelled chore: will skip. Narrow the list rather than
+      widening it.
+    required: false
+    default: "chore,docs"
+  skip-label:
+    description: >-
+      A label that forces a skip. An escape hatch anyone with write access can
+      apply, so it is a deliberate hole in the gate. Set to an empty string to
+      disable it.
+    required: false
+    default: "skip-review"
+  non-docs-filter:
+    description: >-
+      dorny/paths-filter definition matching everything that is NOT
+      documentation. The gate skips when this comes back false, meaning the diff
+      touched documentation only. Expressed as an inverse because
+      paths-filter answers "did any of these change?", and the question here is
+      "did anything else change?".
+    required: false
+    default: |
+      non_docs:
+        - '**'
+        - '!**/*.md'
+        - '!**/*.mdx'
+        - '!docs/**'
+        - '!.github/ISSUE_TEMPLATE/**'
+
+outputs:
+  skip:
+    description: '"true" when no review is warranted. Defaults to "false".'
+    value: ${{ steps.decide.outputs.skip }}
+  reason:
+    description: "Human-readable explanation, for the job summary and logs."
+    value: ${{ steps.decide.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect whether anything outside documentation changed
+      id: filter
+      continue-on-error: true
+      uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+      with:
+        filters: ${{ inputs.non-docs-filter }}
+
+    - name: Decide
+      id: decide
+      shell: bash
+      env:
+        # Untrusted, author-controlled. Quoted on every use below.
+        HEAD_REF: ${{ inputs.head-ref }}
+        PR_TITLE: ${{ inputs.pr-title }}
+        PR_LABELS: ${{ inputs.pr-labels }}
+        BRANCH_PREFIXES: ${{ inputs.skip-branch-prefixes }}
+        TITLE_PREFIXES: ${{ inputs.skip-title-prefixes }}
+        SKIP_LABEL: ${{ inputs.skip-label }}
+        # Absent or failed detection reads as "something else changed", so the
+        # docs-only rule cannot fire on a broken filter.
+        NON_DOCS: ${{ steps.filter.outputs.non_docs || 'true' }}
+      run: |
+        set -uo pipefail
+
+        emit() {
+          echo "skip=$1" >> "$GITHUB_OUTPUT"
+          echo "reason=$2" >> "$GITHUB_OUTPUT"
+          echo "$2"
+          {
+            if [ "$1" = "true" ]; then
+              echo "### Review skipped"
+            else
+              echo "### Review warranted"
+            fi
+            echo ""
+            echo "$2"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        }
+
+        # 1. Branch prefix. Strongest signal: a bot owns the branch namespace.
+        IFS=',' read -r -a prefixes <<< "$BRANCH_PREFIXES"
+        for p in "${prefixes[@]}"; do
+          p="$(echo "$p" | tr -d '[:space:]')"
+          [ -z "$p" ] && continue
+          case "$HEAD_REF" in
+            "$p"*) emit true "Branch \`$HEAD_REF\` matches the skip prefix \`$p\`. These carry either machine-generated dependency bumps or commits already reviewed on their way to main." ;;
+          esac
+        done
+
+        # 2. Explicit label. Deliberate human override.
+        if [ -n "$SKIP_LABEL" ] && printf '%s' "$PR_LABELS" | grep -qF "\"$SKIP_LABEL\""; then
+          emit true "The \`$SKIP_LABEL\` label is applied, so review was waived deliberately."
+        fi
+
+        # 3. Documentation-only diff. Reads the change rather than trusting a label.
+        if [ "$NON_DOCS" = "false" ]; then
+          emit true "Only documentation changed. Nothing outside markdown and docs/ was touched."
+        fi
+
+        # 4. Conventional Commit type. Weakest signal, checked last so a
+        #    mislabelled substantive change is still caught by 3 above.
+        IFS=',' read -r -a types <<< "$TITLE_PREFIXES"
+        for t in "${types[@]}"; do
+          t="$(echo "$t" | tr -d '[:space:]')"
+          [ -z "$t" ] && continue
+          case "$PR_TITLE" in
+            "$t":*|"$t"\(*\):*) emit true "Title is typed \`$t\`, which this repository treats as not needing review." ;;
+          esac
+        done
+
+        emit false "No skip rule matched, so the change gets a full review."

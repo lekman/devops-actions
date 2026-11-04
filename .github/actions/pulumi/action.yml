@@ -1,0 +1,152 @@
+# Azure OIDC login, dependency install, and Pulumi command execution for one
+# project directory, with an optional policy pack.
+# Supports both preview (read-only) and up (deploy) operations.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - bun must be available on PATH (pre-installed on nb-runner-arm64).
+#   - The calling job must set env vars for the Azure identity:
+#       ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID
+#     and either pass pulumi-organization (OIDC to Pulumi Cloud) or set
+#     PULUMI_ACCESS_TOKEN.
+#   - The calling job must have id-token: write permission, for both logins.
+
+name: Pulumi
+description: >-
+  Azure OIDC login and Pulumi command (preview or up).
+  Requires checkout, bun on PATH, and credential env vars from the caller.
+
+inputs:
+  action:
+    description: 'Pulumi command: "preview" or "up"'
+    required: true
+  stack-name:
+    description: "Pulumi stack name (e.g. staging, prod)"
+    required: true
+  comment-on-pr:
+    description: >-
+      Post the preview as a pull request comment. Default "false": the Pulumi
+      GitHub App, where a repository has it installed, posts the same report
+      with a link to the update, and a second copy from the workflow doubles
+      every preview on the page. Set "true" only where the App is absent.
+    required: false
+    default: "false"
+  github-token:
+    description: "GitHub token for PR comments (required when comment-on-pr is true)"
+    required: false
+    default: ""
+  working-directory:
+    description: "Pulumi project directory, repository-relative"
+    required: false
+    default: "infra"
+  policy-pack:
+    description: >-
+      Directory of a Pulumi policy pack, repository-relative. Empty runs no
+      pack. The pack's dependencies are installed with bun before the command.
+    required: false
+    default: ""
+  install-timeout:
+    description: >-
+      Seconds allowed for bun install of the project's dependencies. A cold
+      install of a large workspace on a loaded runner has taken longer than
+      the job; the cap makes that a named failure rather than a timeout.
+    required: false
+    default: "300"
+  pulumi-organization:
+    description: >-
+      Pulumi Cloud organisation to sign in to with OIDC. When set, the job's
+      GitHub OIDC token is exchanged for a short-lived organisation token and
+      no PULUMI_ACCESS_TOKEN is needed. The organisation must have registered
+      https://token.actions.githubusercontent.com as an OIDC issuer with a
+      policy allowing this repository. Empty keeps the PULUMI_ACCESS_TOKEN
+      environment variable as the credential.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # The same cache the turbo action keeps, same key, so a Pulumi job on a
+    # repository the quality job already installed restores node_modules
+    # and the install below is a no-op. Without it every Pulumi job did a
+    # cold install of the whole workspace; on one consumer that was 670 MB, most
+    # of it @pulumi/azure-native, and it overran the job's ten minutes on
+    # a loaded runner.
+    - name: Restore dependency cache
+      id: deps-cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: node_modules
+        key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+
+    - name: Install infra dependencies
+      shell: bash
+      # bun install resolves @lekman scope from npmjs.org. NPM_TOKEN
+      # is sourced from the runner env if .npmrc references it (matches
+      # the turbo action convention). Bun prints nothing until it finishes
+      # when there is no terminal, so a slow install looks like a hang;
+      # --verbose keeps the log honest, and the cap turns a real stall
+      # into a failure with a name instead of a job timeout.
+      env:
+        GH_TOKEN: ${{ github.token }}
+        INSTALL_TIMEOUT: ${{ inputs.install-timeout }}
+      run: |
+        if ! timeout "${INSTALL_TIMEOUT}" bun install --frozen-lockfile --verbose > install.log 2>&1; then
+          tail -40 install.log
+          echo "::error title=Pulumi::bun install did not finish within ${INSTALL_TIMEOUT}s; see the log above"
+          exit 1
+        fi
+        tail -3 install.log
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Install policy pack dependencies
+      if: inputs.policy-pack != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: bun install --frozen-lockfile
+      working-directory: ${{ inputs.policy-pack }}
+
+    - name: Azure OIDC login
+      uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3
+      with:
+        client-id: ${{ env.ARM_CLIENT_ID }}
+        tenant-id: ${{ env.ARM_TENANT_ID }}
+        subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+    # A short-lived token from the job's own identity, the same exchange the
+    # Azure login makes. Nothing long-lived is stored anywhere. The action
+    # exports PULUMI_ACCESS_TOKEN for the steps that follow.
+    - name: Pulumi Cloud OIDC login
+      id: pulumi-oidc
+      if: inputs.pulumi-organization != ''
+      uses: pulumi/auth-actions@141415910c3beb54e03b48e9057c204c97b956f2 # v2.1.0
+      with:
+        organization: ${{ inputs.pulumi-organization }}
+        requested-token-type: urn:pulumi:token-type:access_token:organization
+
+    - name: Pulumi ${{ inputs.action }}
+      uses: pulumi/actions@8582a9e8cc630786854029b4e09281acd6794b58 # v6
+      with:
+        command: ${{ inputs.action }}
+        stack-name: ${{ inputs.stack-name }}
+        work-dir: ${{ inputs.working-directory }}
+        # An absolute path, because pulumi resolves it from the project
+        # directory rather than the repository root.
+        policyPacks: ${{ inputs.policy-pack != '' && format('{0}/{1}', github.workspace, inputs.policy-pack) || '' }}
+        cloud-url: https://api.pulumi.com
+        comment-on-pr: ${{ inputs.comment-on-pr }}
+        github-token: ${{ inputs.github-token }}
+      # The token comes from the OIDC step's output when that ran, and from
+      # the caller's environment otherwise. The step's GITHUB_ENV export is
+      # not enough on its own: a job-level env of the same name, empty on
+      # the OIDC path, outranks it, which is what the first run showed as
+      # "PULUMI_ACCESS_TOKEN must be set".
+      env:
+        PULUMI_ACCESS_TOKEN: ${{ steps.pulumi-oidc.outputs.pulumi-access-token || env.PULUMI_ACCESS_TOKEN }}
+        ARM_USE_OIDC: "true"
+        ARM_CLIENT_ID: ${{ env.ARM_CLIENT_ID }}
+        ARM_TENANT_ID: ${{ env.ARM_TENANT_ID }}
+        ARM_SUBSCRIPTION_ID: ${{ env.ARM_SUBSCRIPTION_ID }}
+        ENTRA_TENANT_ID: ${{ env.ARM_TENANT_ID }}
+        IMAGE_TAG: ${{ env.IMAGE_TAG }}

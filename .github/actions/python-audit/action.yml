@@ -1,0 +1,234 @@
+# Audits a Python project's dependencies against the PyPI and OSV advisory
+# databases with pip-audit, and writes a markdown summary for the gate.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - setup-runtime and python-deps must have run, so the interpreter, the
+#     package manager, the project's dependencies and pip-audit are present.
+#
+# pip-audit is installed by python-deps into its own isolated environment.
+# Calling `pip-audit` with no `-r` scans THAT environment — pip-audit and
+# its own dependencies — and never the project. Every branch below therefore
+# produces a requirements file the project owns and audits it explicitly.
+#
+# An audit that could not run is reported as indeterminate, never as a pass.
+# A zero vulnerability count from a tool that never executed is
+# indistinguishable from a clean result, and that is the shape a false green
+# takes.
+
+name: Python Audit
+description: >-
+  Run pip-audit against a project's resolved dependencies and write a
+  markdown findings file. Requires setup-runtime and python-deps first.
+
+inputs:
+  package-manager:
+    description: "One of pip, pipenv, poetry, uv. From the detect-language action."
+    required: true
+  working-directory:
+    description: Project directory, repository-relative.
+    required: false
+    default: "."
+  out-path:
+    description: Absolute path to write the findings markdown to.
+    required: true
+  fail-on-vulnerability:
+    description: >-
+      Fail the step when advisories are found. Default "false" — the gate
+      carries the verdict, and an audit that reds the job hides the other
+      dimensions behind it.
+    required: false
+    default: "false"
+  fail-on-indeterminate:
+    description: >-
+      Fail the step when the audit could not run at all. Default "true",
+      and the difference from `fail-on-vulnerability` is deliberate.
+      Advisories are a finding, and the gate reports findings. An audit that
+      never executed is not a finding — it is a security dimension
+      reporting green while checking nothing, and the gate cannot show a
+      third state on the row. Setting this "false" accepts that a broken
+      audit will look like a passing one.
+    required: false
+    default: "true"
+
+outputs:
+  status:
+    description: '"clean", "vulnerable", or "indeterminate".'
+    value: ${{ steps.audit.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run pip-audit
+      id: audit
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        OUT_PATH: ${{ inputs.out-path }}
+        FAIL_ON_VULN: ${{ inputs.fail-on-vulnerability }}
+        FAIL_ON_INDETERMINATE: ${{ inputs.fail-on-indeterminate }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -uo pipefail
+
+        REPORT="${RUNNER_TEMP}/pip-audit.json"
+        REQS="${RUNNER_TEMP}/pip-audit-requirements.txt"
+
+        # Clear any earlier content at this path before anything else. A
+        # stale findings file left by a previous run reads as this run's
+        # result, and a green one left behind by a run that later failed is
+        # the worst version of that.
+        mkdir -p "$(dirname "$OUT_PATH")"
+        rm -f "$OUT_PATH"
+
+        # Write the indeterminate findings file without going through node.
+        # The writer itself can be what failed, and a step that reports
+        # nothing is read as a step that found nothing.
+        write_indeterminate() {
+          {
+            echo "⚪ **Audit did not complete** — $1."
+            echo ""
+            echo "This is not a pass. Dependencies were not checked against any advisory database on this run."
+          } > "$OUT_PATH"
+        }
+
+        # Emit the findings file and stop. Used for every path where the
+        # audit could not produce a result the gate can trust.
+        give_up() {
+          echo "::warning title=Python Audit::$1"
+          echo "status=indeterminate" >> "$GITHUB_OUTPUT"
+          if ! node "${ACTION_PATH}/dist/findings-audit.js" --reason "$1" --out "$OUT_PATH"; then
+            write_indeterminate "$1"
+          fi
+          if [ "$FAIL_ON_INDETERMINATE" = "true" ]; then
+            echo "::error title=Python Audit::the dependency audit did not run, so this job reports nothing about advisories. Fix the cause above, or set fail-on-indeterminate: false to accept a green row for an audit that checked nothing."
+            exit 1
+          fi
+          exit 0
+        }
+
+        # pipx puts pip-audit's bin dir on GITHUB_PATH, but propagation
+        # across composite steps has lagged before and surfaces as exit 127
+        # from a step that looks like it just found nothing. Prepend the
+        # known locations and confirm the binary answers before relying on
+        # it.
+        export PATH="/opt/pipx_bin:${HOME}/.local/bin:${PATH}"
+        PIP_AUDIT=(pip-audit)
+        if ! pip-audit --version >/dev/null 2>&1; then
+          if pipx run pip-audit --version >/dev/null 2>&1; then
+            PIP_AUDIT=(pipx run pip-audit)
+          else
+            give_up "pip-audit is not installed on the runner"
+          fi
+        fi
+
+        # ── Resolve the project's dependencies to a requirements file ─────
+        case "$PACKAGE_MANAGER" in
+          poetry)
+            if ! poetry export --without-hashes --format requirements.txt -o "$REQS" 2>/dev/null; then
+              # Poetry 2.x moved `export` into the optional
+              # poetry-plugin-export, which the runner does not install.
+              # poetry.lock already pins every dependency, so read the
+              # locked versions directly. Packages sourced from git, a
+              # local path or a URL are skipped — they have no PyPI release
+              # to match an advisory against.
+              if [ ! -f poetry.lock ]; then
+                give_up "poetry export is unavailable and there is no poetry.lock to read"
+              fi
+              python - "$REQS" <<'PYEOF' || give_up "poetry.lock could not be read"
+        import sys, tomllib
+        with open("poetry.lock", "rb") as fh:
+            lock = tomllib.load(fh)
+        skip = {"git", "directory", "file", "url"}
+        lines = [
+            f"{p['name']}=={p['version']}"
+            for p in lock.get("package", [])
+            if p.get("name") and p.get("version")
+            and (p.get("source") or {}).get("type") not in skip
+        ]
+        if not lines:
+            sys.exit(1)
+        with open(sys.argv[1], "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        PYEOF
+            fi
+            ;;
+          uv)
+            uv export --no-hashes --format requirements-txt --output-file "$REQS" 2>/dev/null \
+              || give_up "uv export failed"
+            ;;
+          pipenv)
+            # pipenv writes its export to stdout rather than to a file.
+            pipenv requirements > "$REQS" 2>/dev/null \
+              || give_up "pipenv requirements failed"
+            ;;
+          pip)
+            if [ -f requirements.txt ]; then
+              cp requirements.txt "$REQS"
+            else
+              # An installed project has its dependencies in the active
+              # environment; freeze them rather than reporting nothing.
+              pip freeze > "$REQS" 2>/dev/null \
+                || give_up "no requirements.txt and pip freeze failed"
+            fi
+            ;;
+          *)
+            give_up "unknown package manager '$PACKAGE_MANAGER'"
+            ;;
+        esac
+
+        if [ ! -s "$REQS" ]; then
+          give_up "dependency export produced an empty requirements file"
+        fi
+
+        # Two kinds of line pip-audit cannot resolve, both dropped:
+        #
+        #   -e <path>   editable installs, which pip-audit's internal
+        #               `pip install -r` would try to BUILD
+        #   git+<url>   VCS dependencies, resolved inside pip-audit's own
+        #               environment where the Git credentials from
+        #               python-deps are absent, so a private one turns the
+        #               whole audit indeterminate
+        #
+        # A VCS dependency pinned to a commit has no PyPI advisory to match
+        # anyway, and its third-party transitives are exported as separate
+        # pinned entries that are still audited.
+        sed -i.bak -e '/^-e[[:space:]]/d' -e '/git+/d' "$REQS"
+
+        "${PIP_AUDIT[@]}" -r "$REQS" --format json > "$REPORT" 2>"${RUNNER_TEMP}/pip-audit.err"
+        AUDIT_EXIT=$?
+
+        # pip-audit exits non-zero when it finds advisories, which is a
+        # result rather than a failure. Only an empty report means it did
+        # not get far enough to produce one.
+        if [ ! -s "$REPORT" ]; then
+          echo "::group::pip-audit stderr"
+          cat "${RUNNER_TEMP}/pip-audit.err" 2>/dev/null || true
+          echo "::endgroup::"
+          give_up "pip-audit exited $AUDIT_EXIT without writing a report"
+        fi
+
+        if ! node "${ACTION_PATH}/dist/findings-audit.js" --json "$REPORT" --out "$OUT_PATH"; then
+          give_up "the findings writer failed to read pip-audit's report"
+        fi
+
+        # A writer that exited zero but produced nothing still leaves the
+        # gate with no result to show.
+        if [ ! -s "$OUT_PATH" ]; then
+          give_up "the findings writer produced an empty report"
+        fi
+
+        if grep -q "did not complete" "$OUT_PATH"; then
+          STATUS=indeterminate
+        elif grep -q "No known vulnerabilities" "$OUT_PATH"; then
+          STATUS=clean
+        else
+          STATUS=vulnerable
+        fi
+        echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+        echo "::notice title=Python Audit::$STATUS"
+
+        if [ "$STATUS" = "vulnerable" ] && [ "$FAIL_ON_VULN" = "true" ]; then
+          exit 1
+        fi

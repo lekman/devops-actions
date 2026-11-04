@@ -1,0 +1,62 @@
+{
+  "name": "@lekman/devops-actions",
+  "version": "0.13.1",
+  "private": true,
+  "description": "Code behind the devops-actions composite actions",
+  "type": "module",
+  "exports": {
+    "./branch-maintenance": {
+      "types": "./dist/branch-maintenance.d.ts",
+      "default": "./dist/branch-maintenance.js"
+    },
+    "./language-detect": {
+      "types": "./dist/language-detect.d.ts",
+      "default": "./dist/language-detect.js"
+    },
+    "./toml-lite": {
+      "types": "./dist/toml-lite.d.ts",
+      "default": "./dist/toml-lite.js"
+    },
+    "./findings-audit": {
+      "types": "./dist/findings-audit.d.ts",
+      "default": "./dist/findings-audit.js"
+    },
+    "./findings-security": {
+      "types": "./dist/findings-security.d.ts",
+      "default": "./dist/findings-security.js"
+    },
+    "./findings-tests": {
+      "types": "./dist/findings-tests.d.ts",
+      "default": "./dist/findings-tests.js"
+    },
+    "./quality-gate": {
+      "types": "./dist/quality-gate.d.ts",
+      "default": "./dist/quality-gate.js"
+    },
+    "./release-matrix": {
+      "types": "./dist/release-matrix.d.ts",
+      "default": "./dist/release-matrix.js"
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc && bun run scripts/post-build.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "bun test",
+    "test:coverage": "bun test --reporter=junit --reporter-outfile=junit.xml --coverage --coverage-reporter=lcov"
+  },
+  "devDependencies": {
+    "@lekman/eslint-config": "workspace:*",
+    "@types/bun": "^1.3.11",
+    "eslint": "^10.2.0",
+    "typescript": "^6.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lekman/devops-actions.git",
+    "directory": "packages/devops-actions"
+  }
+}

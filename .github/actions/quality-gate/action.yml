@@ -1,0 +1,69 @@
+# Evaluates upstream job results and fails if quality checks did not pass.
+# Logic lives in packages/devops-actions/src/quality-gate.ts and is compiled
+# into dist/ by the package build step.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - dist/quality-gate.js must exist (run turbo build first, or committed).
+
+name: Quality Gate
+description: >-
+  Evaluate upstream CI job results. Exits non-zero if required checks failed.
+  Requires a prior checkout step.
+
+inputs:
+  results:
+    description: >-
+      JSON object mapping job names to GitHub Actions result strings.
+      Example: {"quality": "success", "security": "failure", "infra-changed": "true"}
+    required: true
+  github-token:
+    description: GitHub token with pull-requests:write for posting PR comments. Omit to skip PR comments.
+    required: false
+  pr-number:
+    description: Pull request number. Required for PR comments.
+    required: false
+  mode:
+    description: >-
+      "final" (default) evaluates the gate and exits non-zero on failure.
+      "start" posts a pending placeholder comment and always exits 0.
+    required: false
+    default: final
+  timezone:
+    description: >-
+      IANA timezone name used to format the footer timestamp (e.g.
+      "Europe/Stockholm", "America/New_York"). Defaults to UTC.
+    required: false
+    default: UTC
+  findings-dir:
+    description: >-
+      Optional directory containing per-job findings markdown files named
+      "<job>.md" (e.g. quality.md, security.md). When present, the file's
+      contents are embedded inside that check's <details> body. Producers
+      upload these as workflow artifacts named "findings-<job>" which the
+      caller workflow downloads with `merge-multiple: true` into this dir.
+      Missing files are silently skipped.
+    required: false
+    default: ""
+
+outputs:
+  pass:
+    description: Whether the quality gate passed ("true" or "false")
+    value: ${{ steps.gate.outputs.pass }}
+  failures:
+    description: Comma-separated list of failed checks (empty if passed)
+    value: ${{ steps.gate.outputs.failures }}
+
+runs:
+  using: composite
+  steps:
+    - name: Evaluate quality gate
+      id: gate
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        QUALITY_GATE_MODE: ${{ inputs.mode }}
+        QUALITY_GATE_TIMEZONE: ${{ inputs.timezone }}
+        QUALITY_GATE_FINDINGS_DIR: ${{ inputs.findings-dir }}
+      run: node ${{ github.action_path }}/dist/quality-gate.js '${{ inputs.results }}'
