@@ -24,6 +24,6 @@ runs:
       # v1 at 2026-05-14. Every action trunk-action calls internally is pinned
       # to a SHA from this commit on, which an organisation that requires SHA
       # pinning checks transitively; the previous pin called actions/checkout@v4.
-      uses: trunk-io/trunk-action@04ba50e7658c81db7356da96657e6e77f220bfa3 # v1 2026-05-14
+      uses: trunk-io/trunk-action@e1234e67a86010d61ddac8d8ebf4b783e2ffd2fa # v1 2026-05-14
       with:
         check-mode: ${{ inputs.check-mode }}

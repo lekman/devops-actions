@@ -74,7 +74,7 @@ runs:
     # a loaded runner.
     - name: Restore dependency cache
       id: deps-cache
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: node_modules
         key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
@@ -108,7 +108,7 @@ runs:
       working-directory: ${{ inputs.policy-pack }}
 
     - name: Azure OIDC login
-      uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3
+      uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
       with:
         client-id: ${{ env.ARM_CLIENT_ID }}
         tenant-id: ${{ env.ARM_TENANT_ID }}
@@ -120,13 +120,13 @@ runs:
     - name: Pulumi Cloud OIDC login
       id: pulumi-oidc
       if: inputs.pulumi-organization != ''
-      uses: pulumi/auth-actions@141415910c3beb54e03b48e9057c204c97b956f2 # v2.1.0
+      uses: pulumi/auth-actions@159c3e431aab767d4519b96f3f784d7d3d725622 # v2.1.1
       with:
         organization: ${{ inputs.pulumi-organization }}
         requested-token-type: urn:pulumi:token-type:access_token:organization
 
     - name: Pulumi ${{ inputs.action }}
-      uses: pulumi/actions@8582a9e8cc630786854029b4e09281acd6794b58 # v6
+      uses: pulumi/actions@8e5e406f4007fca908480587cb9893c07090f58d # v7.0.0
       with:
         command: ${{ inputs.action }}
         stack-name: ${{ inputs.stack-name }}
