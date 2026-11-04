@@ -13,6 +13,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # typescript-eslint refuses to load under TypeScript 7 (checked 4 Nov 2026).
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       dependencies:
         patterns: ["*"]
