@@ -34,11 +34,7 @@ export interface BranchStatus {
 }
 
 export type BranchAction =
-  | "updated"
-  | "conflicted"
-  | "clean"
-  | "auto-merge"
-  | "error";
+  "updated" | "conflicted" | "clean" | "auto-merge" | "error";
 
 export interface MaintenanceResult {
   repo: string;
