@@ -120,13 +120,13 @@ runs:
     - name: Pulumi Cloud OIDC login
       id: pulumi-oidc
       if: inputs.pulumi-organization != ''
-      uses: pulumi/auth-actions@159c3e431aab767d4519b96f3f784d7d3d725622 # v2.1.1
+      uses: pulumi/auth-actions@273044cc19e63ea565285da8edd4e059126a0bdb # v2.1.2
       with:
         organization: ${{ inputs.pulumi-organization }}
         requested-token-type: urn:pulumi:token-type:access_token:organization
 
     - name: Pulumi ${{ inputs.action }}
-      uses: pulumi/actions@8e5e406f4007fca908480587cb9893c07090f58d # v7.0.0
+      uses: pulumi/actions@96c7761824268174e0d2a4e8c7d75671eebd24a7 # v7.1.0
       with:
         command: ${{ inputs.action }}
         stack-name: ${{ inputs.stack-name }}
