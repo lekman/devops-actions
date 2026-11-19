@@ -17,6 +17,6 @@
     "url": "git+https://github.com/lekman/devops-actions.git"
   },
   "devDependencies": {
-    "prettier": "3.9.10"
+    "prettier": "3.10.1"
   }
 }
