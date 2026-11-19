@@ -87,20 +87,17 @@ runs:
           *,python,*) CONFIGS="$CONFIGS --config p/python" ;;
         esac
 
+        # One scan does both jobs. --json-output writes the JSON file while
+        # the text report still goes to the log, and --error sets the exit
+        # code from the same results.
         JSON_ARGS=""
         if [ -n "$JSON_OUT" ]; then
           mkdir -p "$(dirname "$JSON_OUT")"
-          JSON_ARGS="--json --output $JSON_OUT"
+          JSON_ARGS="--json-output=$JSON_OUT"
           echo "json-path=$JSON_OUT" >> "$GITHUB_OUTPUT"
         fi
 
-        # Run with text output for console + optionally JSON to file
-        if [ -n "$JSON_OUT" ]; then
-          semgrep $CONFIGS --metrics off $JSON_ARGS || true
-          semgrep --error $CONFIGS --metrics off
-        else
-          semgrep --error $CONFIGS --metrics off
-        fi
+        semgrep --error $CONFIGS --metrics off $JSON_ARGS
 
     - name: Run Gitleaks
       id: gitleaks
