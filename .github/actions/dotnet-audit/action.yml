@@ -1,0 +1,82 @@
+# Audits a .NET project's NuGet dependencies, direct and transitive, with
+# the SDK's own package audit, and writes a markdown summary for the gate
+# in the same shape python-audit writes.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - detect-language, for dotnet-version.
+#
+# `dotnet package list --vulnerable --include-transitive` (or `dotnet list
+# package` on SDKs before 10) reads the advisory feed of each package
+# source, nuget.org's by default, which needs no account or key.
+#
+# An audit that could not run is reported as indeterminate, never as a pass.
+
+name: .NET Audit
+description: >-
+  Run the .NET SDK's package audit against a solution's resolved NuGet
+  dependencies and write a markdown findings file. Requires a prior checkout.
+
+inputs:
+  dotnet-version:
+    description: >-
+      SDK version for actions/setup-dotnet when the repository has no
+      global.json. From the detect-language action.
+    required: false
+    default: ""
+  working-directory:
+    description: Directory holding the solution or projects, repository-relative.
+    required: false
+    default: "."
+  out-path:
+    description: Absolute path to write the findings markdown to.
+    required: true
+  fail-on-vulnerability:
+    description: >-
+      Fail the step when advisories are found. Default "false": the gate
+      carries the verdict, the same as python-audit.
+    required: false
+    default: "false"
+  fail-on-indeterminate:
+    description: >-
+      Fail the step when the audit could not run at all. Default "true",
+      for the reason python-audit gives.
+    required: false
+    default: "true"
+
+outputs:
+  status:
+    description: '"clean", "vulnerable", or "indeterminate".'
+    value: ${{ steps.audit.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read the project's own configuration
+      id: inspect
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: node "${{ github.action_path }}/dist/project-inspect.js" --root . --kind dotnet
+
+    - name: Set up .NET
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      with:
+        global-json-file: ${{ steps.inspect.outputs.global-json }}
+        dotnet-version: |
+          ${{ steps.inspect.outputs.global-json == '' && inputs.dotnet-version || '' }}
+          ${{ steps.inspect.outputs.framework-channels }}
+
+    - name: Audit NuGet packages
+      id: audit
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TARGET: ${{ steps.inspect.outputs.target }}
+        PROJECTS: ${{ steps.inspect.outputs.projects }}
+        OUT_PATH: ${{ inputs.out-path }}
+        FAIL_ON_VULN: ${{ inputs.fail-on-vulnerability }}
+        FAIL_ON_INDETERMINATE: ${{ inputs.fail-on-indeterminate }}
+        ACTION_PATH: ${{ github.action_path }}
+        DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+        DOTNET_NOLOGO: "1"
+      run: '"$ACTION_PATH/run.sh"'

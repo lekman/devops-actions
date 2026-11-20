@@ -1,0 +1,97 @@
+# Audits a Gradle or Maven project's dependencies against the OSV advisory
+# database with OSV-Scanner, and writes a markdown summary for the gate in
+# the same shape python-audit writes.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - detect-language, for build-tool and java-version.
+#
+# OSV-Scanner needs no account or API key. It reads Gradle lockfiles and
+# Maven poms (resolving a pom's transitive dependencies itself). For a
+# Gradle build that commits no lockfiles, Gradle writes them first through
+# an init script, so the audit reads the versions Gradle resolves. Those
+# lockfiles are written into the checkout. See README.md for the limits.
+#
+# An audit that could not run is reported as indeterminate, never as a pass.
+
+name: JVM Audit
+description: >-
+  Run OSV-Scanner against a Gradle or Maven project's resolved dependencies
+  and write a markdown findings file. Requires a prior checkout.
+
+inputs:
+  build-tool:
+    description: '"gradle" or "maven". From the detect-language action.'
+    required: true
+  java-version:
+    description: >-
+      Java version Gradle runs on to resolve dependencies. From the
+      detect-language action. Not used for Maven.
+    required: false
+    default: "17"
+  working-directory:
+    description: Project directory, repository-relative.
+    required: false
+    default: "."
+  out-path:
+    description: Absolute path to write the findings markdown to.
+    required: true
+  fail-on-vulnerability:
+    description: >-
+      Fail the step when advisories are found. Default "false": the gate
+      carries the verdict, the same as python-audit.
+    required: false
+    default: "false"
+  fail-on-indeterminate:
+    description: >-
+      Fail the step when the audit could not run at all. Default "true",
+      for the reason python-audit gives: an audit that never executed would
+      otherwise show as a green row.
+    required: false
+    default: "true"
+
+outputs:
+  status:
+    description: '"clean", "vulnerable", or "indeterminate".'
+    value: ${{ steps.audit.outputs.status }}
+  osv-scanner-version:
+    description: The OSV-Scanner version that ran.
+    value: ${{ steps.osv.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up the JDK for Gradle
+      if: inputs.build-tool == 'gradle'
+      uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java-version }}
+
+    - name: Set up Gradle
+      if: inputs.build-tool == 'gradle'
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      with:
+        cache-provider: basic
+        cache-read-only: true
+        add-job-summary: never
+
+    - name: Install OSV-Scanner
+      id: osv
+      shell: bash
+      env:
+        TOOLS_DIR: ${{ runner.temp }}/osv-scanner
+      run: '"${{ github.action_path }}/install-osv-scanner.sh"'
+
+    - name: Run OSV-Scanner
+      id: audit
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BUILD_TOOL: ${{ inputs.build-tool }}
+        OUT_PATH: ${{ inputs.out-path }}
+        FAIL_ON_VULN: ${{ inputs.fail-on-vulnerability }}
+        FAIL_ON_INDETERMINATE: ${{ inputs.fail-on-indeterminate }}
+        ACTION_PATH: ${{ github.action_path }}
+        OSV_SCANNER: ${{ steps.osv.outputs.path }}
+      run: '"$ACTION_PATH/run.sh"'

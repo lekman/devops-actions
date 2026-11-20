@@ -133,6 +133,10 @@ describe("kbUrlForJob", () => {
     ["security", "security.md"],
     ["trunk-check", "trunk.md"],
     ["infra-preview", "infra.md"],
+    ["jvm-quality", "jvm.md"],
+    ["jvm-audit", "jvm.md"],
+    ["dotnet-quality", "dotnet.md"],
+    ["dotnet-audit", "dotnet.md"],
   ])("maps %s to %s", (job, expectedPage) => {
     expect(kbUrlForJob(job)).toBe(
       `https://github.com/lekman/devops-actions/blob/main/docs/kb/${expectedPage}`,
@@ -145,6 +149,36 @@ describe("kbUrlForJob", () => {
 });
 
 describe("formatSummary", () => {
+  test("labels the JVM and .NET jobs and links their pages", () => {
+    const input = aGateInput({
+      required: ["quality", "security"],
+      conditional: [
+        "jvm-quality",
+        "jvm-audit",
+        "dotnet-quality",
+        "dotnet-audit",
+      ],
+      groups: { "Security Gate": ["security", "jvm-audit", "dotnet-audit"] },
+      results: {
+        quality: "success",
+        security: "success",
+        "jvm-quality": "failure",
+        "jvm-audit": "success",
+        "dotnet-quality": "success",
+        "dotnet-audit": "skipped",
+      },
+    });
+    const md = formatSummary(input, evaluate(input));
+    expect(md).toContain(
+      "<b>QA: JVM Format, Analysis, Build, Test</b> — failure · Conditional",
+    );
+    expect(md).toContain("<b>QA: .NET Build, Format, Test</b> — success");
+    expect(md).toContain("<b>Security: JVM Dependency Audit</b>");
+    expect(md).toContain("<b>Security: .NET Dependency Audit</b> — skipped");
+    expect(md).toContain("docs/kb/jvm.md");
+    expect(md).toContain("docs/kb/dotnet.md");
+  });
+
   test("shows PASSED for passing gate", () => {
     const input = aGateInput();
     const result = evaluate(input);

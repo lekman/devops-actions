@@ -17,6 +17,34 @@
       "types": "./dist/toml-lite.d.ts",
       "default": "./dist/toml-lite.js"
     },
+    "./file-walk": {
+      "types": "./dist/file-walk.d.ts",
+      "default": "./dist/file-walk.js"
+    },
+    "./jvm-detect": {
+      "types": "./dist/jvm-detect.d.ts",
+      "default": "./dist/jvm-detect.js"
+    },
+    "./dotnet-detect": {
+      "types": "./dist/dotnet-detect.d.ts",
+      "default": "./dist/dotnet-detect.js"
+    },
+    "./project-inspect": {
+      "types": "./dist/project-inspect.d.ts",
+      "default": "./dist/project-inspect.js"
+    },
+    "./coverage": {
+      "types": "./dist/coverage.d.ts",
+      "default": "./dist/coverage.js"
+    },
+    "./coverage-check": {
+      "types": "./dist/coverage-check.d.ts",
+      "default": "./dist/coverage-check.js"
+    },
+    "./trx-junit": {
+      "types": "./dist/trx-junit.d.ts",
+      "default": "./dist/trx-junit.js"
+    },
     "./findings-audit": {
       "types": "./dist/findings-audit.d.ts",
       "default": "./dist/findings-audit.js"

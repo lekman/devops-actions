@@ -6,6 +6,8 @@ For a TypeScript repository the quality job runs `turbo run test:coverage`, or `
 
 For a Python repository it runs `pytest`. See [Python Projects](python.md) for what enables that and how coverage is configured; the sections below cover the parts both languages share.
 
+Kotlin and Java tests run in the **jvm-quality** job, and C# tests in the **dotnet-quality** job. Both hold line coverage to an 80% floor. See [JVM Projects](jvm.md) and [.NET Projects](dotnet.md).
+
 ## Common Failures
 
 | Symptom                                   | Cause                                               | Fix                                                                                                              |
@@ -68,3 +70,20 @@ rather than as a clean run.
 | Gate shows no test line for a Python repo    | `junit.xml` was not written, so the test step did not run | Check that `[tool.pytest.*]` or a `tests/` directory exists                 |
 | Gate reports errors rather than failures     | A test module raised during collection, often an import   | Read the pytest log for the traceback. Fix the import before the assertions |
 | Failing test names show a module, not a file | pytest records `classname` and no file attribute          | Expected. The module path is what pytest provides                           |
+
+## Reading JVM and .NET Results
+
+Gradle and Maven Surefire write one JUnit file per test class, with a
+`<testsuite>` root and no `<testsuites>`. The gate reads every file in the
+report folders jvm-quality lists and adds up the counts.
+
+`dotnet test` writes TRX, which dotnet-quality converts to one JUnit file.
+Coverage comes from JaCoCo XML (JaCoCo or Kover) for the JVM and Cobertura
+for .NET. Several JaCoCo reports, one per module, are added up. Several
+Cobertura reports, one per test project, are merged line by line.
+
+| Symptom                                     | Cause                                                       | Fix                                                        |
+| ------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------- |
+| Gate shows no test line for a JVM repo      | No `build/test-results` or `target/surefire-reports` folder | Check the build log. The build failed before the tests ran |
+| Gate shows no test line for a .NET repo     | The tests wrote no TRX                                      | See [.NET Projects](dotnet.md#tests-and-coverage)          |
+| Failing test names show a class, not a file | JUnit from Gradle, Maven and TRX records the class only     | Expected. The class name is what the test runner provides  |

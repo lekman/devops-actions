@@ -3,15 +3,18 @@
  *
  * Detects which languages a repository declares, and for Python which
  * package manager owns it, which interpreter version it pins, and which
- * CI phases its `pyproject.toml` actually configures.
+ * CI phases its `pyproject.toml` actually configures. For the JVM it
+ * reports the build tool and Java version, and for .NET the SDK version.
  *
  * Consumed by the `detect-language` composite action, whose outputs gate
  * the per-language steps in the `quality` job of `ci.yml`.
  *
  * It reads one repository root, not a matrix of discovered projects.
  */
+import type { DotnetInfo } from "./dotnet-detect.js";
+import type { JvmInfo } from "./jvm-detect.js";
 import type { TomlDocument } from "./toml-lite.js";
-export type Language = "node" | "python";
+export type Language = "node" | "python" | "java" | "kotlin" | "csharp";
 export type PythonPackageManager = "pip" | "pipenv" | "poetry" | "uv";
 export type PythonLintTool = "black" | "flake8" | "pylint" | "ruff";
 export interface PythonInfo {
@@ -31,13 +34,27 @@ export interface DetectionResult {
     hasPython: boolean;
     /** Present only when `hasPython` is true. */
     python?: PythonInfo;
+    /** True when the directory holds a Gradle or Maven build. */
+    hasJvm: boolean;
+    /** Present only when `hasJvm` is true. */
+    jvm?: JvmInfo;
+    /** True when a solution or .NET project file sits at or below the root. */
+    hasDotnet: boolean;
+    /** Present only when `hasDotnet` is true. */
+    dotnet?: DotnetInfo;
 }
 /**
  * Probe a repository root and report what it declares.
  *
+ * Node and Python are read from manifests at the root. JVM and .NET
+ * sources and project files usually sit below it, so those are found by a
+ * bounded walk of the tree (see file-walk).
+ *
  * @param root Absolute path to the repository root.
+ * @param stopAt Highest folder to look in for a .NET global.json, usually
+ *   the repository root when `root` is a subfolder. Defaults to `root`.
  */
-export declare function detect(root: string): DetectionResult;
+export declare function detect(root: string, stopAt?: string): DetectionResult;
 /**
  * Read the Python side of a repository root.
  *
@@ -77,8 +94,8 @@ export declare function detectVersion(root: string, doc: TomlDocument | null): s
 export declare function normaliseRequiresPython(specifier: string): string;
 /**
  * Render a detection result as GitHub Actions `key=value` output lines.
- * Python fields are always emitted so a consuming step can read them
- * without first checking `has-python`.
+ * Every field is always emitted so a consuming step can read it without
+ * first checking `has-python`, `has-jvm` or `has-dotnet`.
  *
  * @param result Detection result.
  */

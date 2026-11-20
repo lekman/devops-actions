@@ -108,7 +108,10 @@ describe("package manager", () => {
   });
 
   test("the tool table decides when no lockfile is committed", () => {
-    write("pyproject.toml", "[project]\nname = 'svc'\n\n[tool.poetry]\nname = 'svc'");
+    write(
+      "pyproject.toml",
+      "[project]\nname = 'svc'\n\n[tool.poetry]\nname = 'svc'",
+    );
     expect(detectPython(root).packageManager).toBe("poetry");
   });
 
@@ -297,6 +300,13 @@ describe("formatOutputs", () => {
         "python-has-lint=true",
         "python-has-typecheck=true",
         "python-lint-tools=ruff",
+        "has-jvm=false",
+        "jvm-build-tool=",
+        "jvm-version=",
+        "jvm-version-source=",
+        "has-dotnet=false",
+        "dotnet-version=",
+        "dotnet-test-runner=",
         "",
       ].join("\n"),
     );

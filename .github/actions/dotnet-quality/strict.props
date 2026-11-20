@@ -1,0 +1,30 @@
+<!--
+  Imported into every project by the dotnet-quality action through
+  -p:CustomBeforeMicrosoftCommonProps. MSBuild imports it after the
+  repository's Directory.Build.props and before the project file, and every
+  property is set only when still empty, so a value the repository sets in
+  either place wins.
+
+  The defaults are the standard the action holds a project to:
+
+    TreatWarningsAsErrors      a warning fails the build
+    AnalysisLevel              latest-recommended .NET analyzer rules
+    EnforceCodeStyleInBuild    IDE style rules from .editorconfig run in the build
+    Nullable                   nullable reference types are checked
+
+  NuGet's own audit warnings (NU1901 to NU1904) stay warnings when this
+  file is what turned warnings into errors. Advisories are the dotnet-audit
+  action's to report, and a new advisory against an unchanged dependency
+  should not break the build. A repository that sets TreatWarningsAsErrors
+  itself keeps its own handling of them.
+-->
+<Project>
+  <PropertyGroup>
+    <_DevopsActionsSetWarningsAsErrors Condition="'$(TreatWarningsAsErrors)' == ''">true</_DevopsActionsSetWarningsAsErrors>
+    <TreatWarningsAsErrors Condition="'$(TreatWarningsAsErrors)' == ''">true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors Condition="'$(_DevopsActionsSetWarningsAsErrors)' == 'true'">$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <AnalysisLevel Condition="'$(AnalysisLevel)' == ''">latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild Condition="'$(EnforceCodeStyleInBuild)' == ''">true</EnforceCodeStyleInBuild>
+    <Nullable Condition="'$(Nullable)' == ''">enable</Nullable>
+  </PropertyGroup>
+</Project>

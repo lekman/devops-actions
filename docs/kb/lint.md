@@ -1,6 +1,6 @@
 # Lint Failures
 
-Covers ESLint, ruff and black failures in the **quality** CI job, and linter failures in the **trunk-check** job.
+Covers ESLint, ruff and black failures in the **quality** CI job, and linter failures in the **trunk-check** job. Kotlin and Java formatting and static analysis (ktlint, detekt, google-java-format) run in **jvm-quality**, and `dotnet format` in **dotnet-quality**: see [JVM Projects](jvm.md) and [.NET Projects](dotnet.md).
 
 The quality job runs `turbo run lint` (or `bun run lint` as fallback), which executes ESLint on `src/`. The trunk-check job runs Trunk-managed linters — see [Trunk](trunk.md) for those.
 

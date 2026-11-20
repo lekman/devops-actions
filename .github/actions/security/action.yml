@@ -23,8 +23,9 @@ inputs:
   languages:
     description: >-
       Comma-separated languages present in the repository, from the
-      detect-language action. Each one adds its Semgrep ruleset on top of
-      `rulesets`. A repo with no Python gets exactly the rulesets it did
+      detect-language action. python, java, kotlin and csharp each add
+      their Semgrep ruleset (p/python, p/java, p/kotlin, p/csharp) on top of
+      `rulesets`. A repo with none of them gets exactly the rulesets it did
       before.
     required: false
     default: ""
@@ -83,9 +84,12 @@ runs:
         # Language rulesets are additive. Semgrep skips rules whose language
         # is absent from the scanned tree, so an unused one costs a little
         # rule-loading time and changes no result.
-        case ",$LANGUAGES," in
-          *,python,*) CONFIGS="$CONFIGS --config p/python" ;;
-        esac
+        # One check per language, since a repository can hold several.
+        for lang_ruleset in python:p/python java:p/java kotlin:p/kotlin csharp:p/csharp; do
+          case ",$LANGUAGES," in
+            *",${lang_ruleset%%:*},"*) CONFIGS="$CONFIGS --config ${lang_ruleset#*:}" ;;
+          esac
+        done
 
         # One scan does both jobs. --json-output writes the JSON file while
         # the text report still goes to the log, and --error sets the exit

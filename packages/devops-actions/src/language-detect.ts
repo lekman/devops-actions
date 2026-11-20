@@ -3,7 +3,8 @@
  *
  * Detects which languages a repository declares, and for Python which
  * package manager owns it, which interpreter version it pins, and which
- * CI phases its `pyproject.toml` actually configures.
+ * CI phases its `pyproject.toml` actually configures. For the JVM it
+ * reports the build tool and Java version, and for .NET the SDK version.
  *
  * Consumed by the `detect-language` composite action, whose outputs gate
  * the per-language steps in the `quality` job of `ci.yml`.
@@ -15,10 +16,15 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 // Explicit .js specifiers: the compiled action runs under node's ESM
 // resolver, which does not add extensions the way a bundler does.
+import { detectDotnet } from "./dotnet-detect.js";
+import { hasExtension, listFiles } from "./file-walk.js";
+import { detectJvm } from "./jvm-detect.js";
 import { getBoolean, getString, hasTable, parseToml } from "./toml-lite.js";
+import type { DotnetInfo } from "./dotnet-detect.js";
+import type { JvmInfo } from "./jvm-detect.js";
 import type { TomlDocument } from "./toml-lite.js";
 
-export type Language = "node" | "python";
+export type Language = "node" | "python" | "java" | "kotlin" | "csharp";
 
 export type PythonPackageManager = "pip" | "pipenv" | "poetry" | "uv";
 
@@ -42,7 +48,25 @@ export interface DetectionResult {
   hasPython: boolean;
   /** Present only when `hasPython` is true. */
   python?: PythonInfo;
+  /** True when the directory holds a Gradle or Maven build. */
+  hasJvm: boolean;
+  /** Present only when `hasJvm` is true. */
+  jvm?: JvmInfo;
+  /** True when a solution or .NET project file sits at or below the root. */
+  hasDotnet: boolean;
+  /** Present only when `hasDotnet` is true. */
+  dotnet?: DotnetInfo;
 }
+
+/** Source extension to the language it indicates, in `languages` order. */
+const SOURCE_LANGUAGES: ReadonlyArray<[string, Language]> = [
+  [".java", "java"],
+  // Only .kt: a Java project with a Kotlin DSL build script (.kts) is not
+  // a Kotlin project, and Semgrep's Kotlin rules have nothing to say about
+  // build scripts.
+  [".kt", "kotlin"],
+  [".cs", "csharp"],
+];
 
 /** Manifest file to the language it indicates. */
 const LANGUAGE_INDICATORS: ReadonlyArray<[string, Language]> = [
@@ -69,9 +93,15 @@ const LINT_TABLES: ReadonlyArray<[PythonLintTool, string]> = [
 /**
  * Probe a repository root and report what it declares.
  *
+ * Node and Python are read from manifests at the root. JVM and .NET
+ * sources and project files usually sit below it, so those are found by a
+ * bounded walk of the tree (see file-walk).
+ *
  * @param root Absolute path to the repository root.
+ * @param stopAt Highest folder to look in for a .NET global.json, usually
+ *   the repository root when `root` is a subfolder. Defaults to `root`.
  */
-export function detect(root: string): DetectionResult {
+export function detect(root: string, stopAt: string = root): DetectionResult {
   const languages: Language[] = [];
   for (const [file, language] of LANGUAGE_INDICATORS) {
     if (existsSync(resolve(root, file)) && !languages.includes(language)) {
@@ -79,14 +109,25 @@ export function detect(root: string): DetectionResult {
     }
   }
 
+  const files = listFiles(root);
+  for (const [extension, language] of SOURCE_LANGUAGES) {
+    if (hasExtension(files, extension)) languages.push(language);
+  }
+
   const hasNode = languages.includes("node");
   const hasPython = languages.includes("python");
+  const jvm = detectJvm(root);
+  const dotnet = detectDotnet(root, files, stopAt);
 
   return {
     languages,
     hasNode,
     hasPython,
     ...(hasPython ? { python: detectPython(root) } : {}),
+    hasJvm: jvm !== null,
+    ...(jvm ? { jvm } : {}),
+    hasDotnet: dotnet !== null,
+    ...(dotnet ? { dotnet } : {}),
   };
 }
 
@@ -224,8 +265,8 @@ function readPyproject(root: string): TomlDocument | null {
 
 /**
  * Render a detection result as GitHub Actions `key=value` output lines.
- * Python fields are always emitted so a consuming step can read them
- * without first checking `has-python`.
+ * Every field is always emitted so a consuming step can read it without
+ * first checking `has-python`, `has-jvm` or `has-dotnet`.
  *
  * @param result Detection result.
  */
@@ -242,6 +283,13 @@ export function formatOutputs(result: DetectionResult): string {
     `python-has-lint=${py?.hasLint ?? false}`,
     `python-has-typecheck=${py?.hasTypecheck ?? false}`,
     `python-lint-tools=${py?.lintTools.join(",") ?? ""}`,
+    `has-jvm=${result.hasJvm}`,
+    `jvm-build-tool=${result.jvm?.buildTool ?? ""}`,
+    `jvm-version=${result.jvm?.javaVersion ?? ""}`,
+    `jvm-version-source=${result.jvm?.javaVersionSource ?? ""}`,
+    `has-dotnet=${result.hasDotnet}`,
+    `dotnet-version=${result.dotnet?.version ?? ""}`,
+    `dotnet-test-runner=${result.dotnet?.testRunner ?? ""}`,
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -256,15 +304,18 @@ function main(): void {
   }
 
   const root = resolve(args.get("root") ?? process.cwd());
-  const result = detect(root);
+  // The SDK reads a global.json above the project too, so look up to the
+  // checkout root when the action runs in a subfolder.
+  const stopAt = resolve(process.env.GITHUB_WORKSPACE ?? root);
+  const result = detect(root, stopAt);
   const outputs = formatOutputs(result);
 
   const githubOutput = process.env.GITHUB_OUTPUT;
   if (githubOutput) appendFileSync(githubOutput, outputs);
 
-  if (result.languages.length === 0) {
+  if (result.languages.length === 0 && !result.hasJvm && !result.hasDotnet) {
     console.log(
-      `::notice::language-detect: no package.json, pyproject.toml or setup.py at ${root}`,
+      `::notice::language-detect: no package.json, pyproject.toml, setup.py, JVM build, .NET project or Java, Kotlin or C# source at ${root}`,
     );
   }
   console.log(outputs.trimEnd());

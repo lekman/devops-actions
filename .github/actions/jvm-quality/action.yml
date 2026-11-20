@@ -1,0 +1,180 @@
+# Runs format, static analysis, build and test, and a coverage floor for a
+# Gradle or Maven project, and captures the output for the quality gate.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - detect-language, for build-tool and java-version.
+#
+# Phases, each run even when an earlier one fails (see run.sh):
+#
+#   Format           ktlint (Kotlin), google-java-format (Java)
+#   Static analysis  detekt (Kotlin); Error Prone only through the build
+#   Build and test   ./gradlew build, or mvn verify, with JaCoCo coverage
+#   Coverage floor   line coverage at or above coverage-threshold
+#
+# A repository's own configuration wins. ktlint reads .editorconfig and
+# detekt reads detekt.yml. A build that applies its own ktlint, detekt,
+# Spotless or coverage rule runs those in the build phase, and this
+# action's default for that check stands down. README.md has the details.
+#
+# The lint tools are standalone downloads, pinned and checked against a
+# SHA-256 (fetch-tools.sh), and run on a JDK 21 installed beside the
+# project's JDK, because google-java-format needs 21 or newer.
+
+name: JVM Quality
+description: >-
+  Format check, static analysis, build, tests and an 80% line coverage
+  floor for a Gradle or Maven project. Requires a prior checkout.
+
+inputs:
+  build-tool:
+    description: '"gradle" or "maven". From the detect-language action.'
+    required: true
+  java-version:
+    description: >-
+      Java version to build with, installed as Temurin. From the
+      detect-language action, which defaults it to 17.
+    required: false
+    default: "17"
+  working-directory:
+    description: Project directory, repository-relative.
+    required: false
+    default: "."
+  coverage-threshold:
+    description: >-
+      Minimum line coverage in percent. Not applied when the build declares
+      its own coverage rule (a Kover bound, a JaCoCo violation rule, or the
+      JaCoCo Maven plugin's check goal).
+    required: false
+    default: "80"
+  build-args:
+    description: >-
+      Extra arguments for the Gradle or Maven command line, separated by
+      spaces, e.g. "-Pci=true".
+    required: false
+    default: ""
+  findings-dir:
+    description: >-
+      Directory to write lint.log (format and static analysis) and
+      build.log (the Gradle or Maven output) into, for findings-tests.
+    required: true
+
+outputs:
+  format-result:
+    description: '"passed", "failed" or "skipped" (no sources, or the build runs its own formatter).'
+    value: ${{ steps.run.outputs.format-result }}
+  analysis-result:
+    description: '"passed", "failed" or "skipped" (no Kotlin sources, or the build runs its own detekt).'
+    value: ${{ steps.run.outputs.analysis-result }}
+  build-result:
+    description: '"passed" or "failed": the Gradle or Maven build, tests included.'
+    value: ${{ steps.run.outputs.build-result }}
+  coverage-result:
+    description: '"passed", "failed" (below the floor, or no report), or "skipped" (the build owns its rule).'
+    value: ${{ steps.run.outputs.coverage-result }}
+  coverage-percent:
+    description: Line coverage in percent, one decimal, e.g. "87.5". Empty when no report was found.
+    value: ${{ steps.run.outputs.coverage-percent }}
+  junit-paths:
+    description: >-
+      Absolute paths of the JUnit XML report folders (build/test-results,
+      target/surefire-reports), one per line. Pass to findings-tests'
+      junit-path.
+    value: ${{ steps.run.outputs.junit-paths }}
+  coverage-paths:
+    description: >-
+      Absolute paths of the JaCoCo XML coverage reports (JaCoCo or Kover),
+      one per line. Pass to findings-tests' jacoco-path.
+    value: ${{ steps.run.outputs.coverage-paths }}
+  lint-log:
+    description: Path of the format and static analysis log. Pass to findings-tests' lint-log.
+    value: ${{ steps.run.outputs.lint-log }}
+  build-log:
+    description: Path of the build log. Pass to findings-tests' typecheck-log for compiler errors.
+    value: ${{ steps.run.outputs.build-log }}
+  tool-versions:
+    description: Versions of the standalone tools, e.g. "ktlint 1.8.0, detekt 1.23.8, google-java-format 1.37.0".
+    value: ${{ steps.key.outputs.versions }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read the project's own configuration
+      id: inspect
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: node "${{ github.action_path }}/dist/project-inspect.js" --root . --kind jvm
+
+    - name: Lint tool versions
+      id: key
+      shell: bash
+      env:
+        MODE: key
+      run: '"${{ github.action_path }}/fetch-tools.sh"'
+
+    - name: Restore the lint tools
+      if: steps.inspect.outputs.kotlin-sources == 'true' || steps.inspect.outputs.java-sources == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/devops-actions/jvm-tools
+        key: ${{ steps.key.outputs.cache-key }}
+
+    - name: Fetch the lint tools
+      if: steps.inspect.outputs.kotlin-sources == 'true' || steps.inspect.outputs.java-sources == 'true'
+      shell: bash
+      env:
+        TOOLS_DIR: ~/.cache/devops-actions/jvm-tools
+        NEED_KOTLIN: ${{ steps.inspect.outputs.kotlin-sources == 'true' && (steps.inspect.outputs.owns-ktlint != 'true' || steps.inspect.outputs.owns-detekt != 'true') }}
+        NEED_JAVA: ${{ steps.inspect.outputs.java-sources == 'true' && steps.inspect.outputs.owns-java-format != 'true' }}
+      run: TOOLS_DIR="${TOOLS_DIR/#\~/$HOME}" "${{ github.action_path }}/fetch-tools.sh"
+
+    # The lint tools need JDK 21. Installed first, so the project's JDK
+    # below is the one left on PATH and in JAVA_HOME.
+    - name: Set up the lint tools JDK
+      id: tools-java
+      if: steps.inspect.outputs.kotlin-sources == 'true' || steps.inspect.outputs.java-sources == 'true'
+      uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+      with:
+        distribution: temurin
+        java-version: "21"
+
+    - name: Set up the project JDK
+      uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java-version }}
+        cache: ${{ inputs.build-tool == 'maven' && 'maven' || '' }}
+        cache-dependency-path: ${{ inputs.build-tool == 'maven' && format('{0}/**/pom.xml', inputs.working-directory) || '' }}
+
+    # Caches Gradle's dependencies and wrapper distributions, and checks the
+    # committed wrapper jar against Gradle's published checksums. The basic
+    # cache provider is the open-source one; the default needs a licence.
+    - name: Set up Gradle
+      if: inputs.build-tool == 'gradle'
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      with:
+        cache-provider: basic
+        add-job-summary: on-failure
+
+    - name: Format, analyse, build, test, coverage
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BUILD_TOOL: ${{ inputs.build-tool }}
+        FINDINGS_DIR: ${{ inputs.findings-dir }}
+        COVERAGE_THRESHOLD: ${{ inputs.coverage-threshold }}
+        EXTRA_ARGS: ${{ inputs.build-args }}
+        ACTION_PATH: ${{ github.action_path }}
+        TOOLS_DIR: ~/.cache/devops-actions/jvm-tools
+        TOOLS_JAVA: ${{ steps.tools-java.outputs.path }}
+        JACOCO_VERSION: "0.8.16"
+        KOTLIN_SOURCES: ${{ steps.inspect.outputs.kotlin-sources }}
+        JAVA_SOURCES: ${{ steps.inspect.outputs.java-sources }}
+        OWNS_KTLINT: ${{ steps.inspect.outputs.owns-ktlint }}
+        OWNS_DETEKT: ${{ steps.inspect.outputs.owns-detekt }}
+        OWNS_JAVA_FORMAT: ${{ steps.inspect.outputs.owns-java-format }}
+        OWNS_COVERAGE_FLOOR: ${{ steps.inspect.outputs.owns-coverage-floor }}
+        GRADLE_VERIFY_TASKS: ${{ steps.inspect.outputs.gradle-verify-tasks }}
+        DETEKT_CONFIG: ${{ steps.inspect.outputs.detekt-config }}
+      run: TOOLS_DIR="${TOOLS_DIR/#\~/$HOME}" "$ACTION_PATH/run.sh"
