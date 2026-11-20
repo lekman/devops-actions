@@ -55,6 +55,9 @@ SHA-256 the release publishes in `osv-scanner_SHA256SUMS`
   Gradle with `lock.init.gradle`, which turns on dependency locking and
   writes lockfiles into the checkout, so the versions audited are the ones
   Gradle resolves. Committed lockfiles are read as they are.
+  Each `gradle.lockfile` is passed to OSV-Scanner by name, because its
+  recursive scan skips files `.gitignore` lists, and a repository that
+  ignores lockfiles would otherwise have them skipped.
 - Only classpath configurations (compile, runtime, test) are audited, not
   build tooling such as the Kotlin compiler.
 - A configuration that cannot resolve, for example from a private

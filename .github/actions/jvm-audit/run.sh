@@ -79,10 +79,28 @@ if [ "$BUILD_TOOL" = "gradle" ]; then
 fi
 
 # ── Scan ────────────────────────────────────────────────────────────────
+# Gradle lockfiles are named one by one. A recursive scan skips files the
+# repository's .gitignore lists, and a repository that ignores lockfiles
+# would otherwise have the ones written above skipped. Only gradle.lockfile
+# is read: buildscript-gradle.lockfile holds build plugins, not product
+# dependencies. Maven poms are found by a recursive scan, so every module
+# of a multi-module build is read.
+scan_args=()
+if [ "$BUILD_TOOL" = "gradle" ]; then
+  while IFS= read -r lockfile; do
+    [ -n "$lockfile" ] && scan_args+=(--lockfile "$lockfile")
+  done <<< "$(find . -name 'gradle.lockfile' -not -path '*/build/*' -not -path '*/.*/*' | sort)"
+  if [ "${#scan_args[@]}" -eq 0 ]; then
+    give_up "no gradle.lockfile to read"
+  fi
+else
+  scan_args=(--recursive .)
+fi
+
 # --all-packages lists every package, so the summary can say how many
 # were checked. Exit codes: 0 no advisories, 1 advisories, 128 nothing
 # to scan, anything else an error.
-"$OSV_SCANNER" scan source --recursive --all-packages --format json . \
+"$OSV_SCANNER" scan source --all-packages --format json "${scan_args[@]}" \
   > "$REPORT" 2> "$ERRORS"
 scan_status=$?
 
