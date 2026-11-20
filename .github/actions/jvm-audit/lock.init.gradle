@@ -1,0 +1,41 @@
+// Gradle init script passed by the jvm-audit action with --init-script.
+// It writes Gradle dependency lockfiles for a build that commits none, so
+// OSV-Scanner can read the resolved versions without editing the build.
+//
+//   ./gradlew ciResolveAndLockAll --write-locks --init-script lock.init.gradle
+//
+// Only classpath configurations are locked and resolved: compileClasspath,
+// runtimeClasspath and their test and source-set variants. Those hold what
+// the project compiles against, ships and tests with. Tool classpaths such
+// as the Kotlin compiler's are left out, because an advisory against a
+// build tool is not an advisory against the product.
+
+allprojects { project ->
+    def isClasspath = { String name -> name ==~ /(?i).*(compile|runtime)classpath/ }
+
+    project.dependencyLocking {
+        lockAllConfigurations()
+    }
+
+    project.tasks.register('ciResolveAndLockAll') {
+        description = 'Resolves every classpath configuration so --write-locks records it.'
+        notCompatibleWithConfigurationCache('resolves configurations at execution time')
+        doLast {
+            if (!project.gradle.startParameter.writeDependencyLocks) {
+                throw new GradleException('ciResolveAndLockAll needs --write-locks')
+            }
+            project.configurations
+                .findAll { it.canBeResolved && isClasspath(it.name) }
+                .each { configuration ->
+                    // One configuration that cannot resolve (a private
+                    // repository, a missing artifact) should not stop the
+                    // others being locked. The audit reports what it read.
+                    try {
+                        configuration.resolve()
+                    } catch (Exception e) {
+                        project.logger.warn("ciResolveAndLockAll: ${project.path}:${configuration.name} did not resolve: ${e.message}")
+                    }
+                }
+        }
+    }
+}
