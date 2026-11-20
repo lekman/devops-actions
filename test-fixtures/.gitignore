@@ -1,0 +1,9 @@
+# Build output from running the fixtures locally or in CI.
+.gradle/
+.kotlin/
+build/
+target/
+bin/
+obj/
+TestResults/
+*.lockfile

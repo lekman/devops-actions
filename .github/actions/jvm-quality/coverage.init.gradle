@@ -1,0 +1,44 @@
+// Gradle init script passed by the jvm-quality action with --init-script.
+// It adds a coverage report to a build without editing the build.
+//
+// Every project gets a `ciCoverage` task, so the action can name it on the
+// command line whatever plugins each project applies. It depends on:
+//
+//   koverXmlReport     when the project applies Kover. The project's own
+//                      Kover setup is used as it is.
+//   jacocoTestReport   when the project applies the java plugin (Kotlin JVM
+//                      applies it too) and not Kover. JaCoCo is applied here
+//                      when the project does not apply it, at the version
+//                      below so that recent class file versions are read,
+//                      and its XML report is switched on. A project that
+//                      applies JaCoCo itself keeps its own version.
+//
+// Both reports are JaCoCo XML, which the findings-tests action and the
+// coverage floor read.
+
+def jacocoVersion = '0.8.16'
+
+allprojects { project ->
+    def ciCoverage = project.tasks.register('ciCoverage') {
+        group = 'verification'
+        description = 'Writes the coverage XML report the jvm-quality action reads.'
+    }
+
+    // Plugins can be applied after this script runs, so the decision waits
+    // until the project is evaluated.
+    project.afterEvaluate {
+        if (project.plugins.hasPlugin('org.jetbrains.kotlinx.kover')) {
+            ciCoverage.configure { dependsOn 'koverXmlReport' }
+        } else if (project.plugins.hasPlugin('java')) {
+            if (!project.plugins.hasPlugin('jacoco')) {
+                project.pluginManager.apply('jacoco')
+                project.jacoco.toolVersion = jacocoVersion
+            }
+            def report = project.tasks.named('jacocoTestReport') {
+                reports { xml.required = true }
+            }
+            project.tasks.named('test') { finalizedBy report }
+            ciCoverage.configure { dependsOn report }
+        }
+    }
+}

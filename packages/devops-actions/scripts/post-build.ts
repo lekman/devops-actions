@@ -15,47 +15,54 @@ const pkg = JSON.parse(
   readFileSync(resolve(import.meta.dirname, "..", "package.json"), "utf8"),
 ) as { version: string };
 
-const targets: Array<[src: string, dest: string]> = [
-  [
-    "quality-gate.js",
-    resolve(root, ".github/actions/quality-gate/dist/quality-gate.js"),
-  ],
-  [
-    "branch-maintenance.js",
-    resolve(
-      root,
-      ".github/actions/branch-maintenance/dist/branch-maintenance.js",
-    ),
-  ],
-  [
-    "findings-tests.js",
-    resolve(root, ".github/actions/findings-tests/dist/findings-tests.js"),
-  ],
-  [
-    "findings-security.js",
-    resolve(
-      root,
-      ".github/actions/findings-security/dist/findings-security.js",
-    ),
-  ],
-  [
-    "release-matrix.js",
-    resolve(root, ".github/actions/release-matrix/dist/release-matrix.js"),
-  ],
-  [
+// Action folder to the compiled modules it runs, entry point first, then
+// every module that entry imports, directly or through another.
+const actions: Record<string, string[]> = {
+  "quality-gate": ["quality-gate.js"],
+  "branch-maintenance": ["branch-maintenance.js"],
+  "findings-tests": ["findings-tests.js", "coverage.js"],
+  "findings-security": ["findings-security.js"],
+  "release-matrix": ["release-matrix.js"],
+  "python-audit": ["findings-audit.js"],
+  "jvm-audit": ["findings-audit.js"],
+  "dotnet-audit": [
     "findings-audit.js",
-    resolve(root, ".github/actions/python-audit/dist/findings-audit.js"),
+    "project-inspect.js",
+    "file-walk.js",
+    "dotnet-detect.js",
   ],
-  [
+  "detect-language": [
     "language-detect.js",
-    resolve(root, ".github/actions/detect-language/dist/language-detect.js"),
-  ],
-  // Imported by language-detect.js.
-  [
     "toml-lite.js",
-    resolve(root, ".github/actions/detect-language/dist/toml-lite.js"),
+    "file-walk.js",
+    "jvm-detect.js",
+    "dotnet-detect.js",
   ],
-];
+  "jvm-quality": [
+    "project-inspect.js",
+    "coverage-check.js",
+    "coverage.js",
+    "file-walk.js",
+    "dotnet-detect.js",
+  ],
+  "dotnet-quality": [
+    "project-inspect.js",
+    "coverage-check.js",
+    "trx-junit.js",
+    "coverage.js",
+    "file-walk.js",
+    "dotnet-detect.js",
+  ],
+};
+
+const targets: Array<[src: string, dest: string]> = Object.entries(
+  actions,
+).flatMap(([action, modules]) =>
+  modules.map((module): [string, string] => [
+    module,
+    resolve(root, ".github/actions", action, "dist", module),
+  ]),
+);
 
 for (const [src, dest] of targets) {
   const srcPath = resolve(dist, src);
