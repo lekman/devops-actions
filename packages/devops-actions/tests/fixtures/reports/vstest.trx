@@ -1,0 +1,90 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="ddb1bf55-38dd-418e-b795-f114e4eb0ac2" name="runner" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-20T09:04:12.7996610+00:00" queuing="2026-11-20T09:04:12.7996610+00:00" start="2026-11-20T09:04:11.9810990+00:00" finish="2026-11-20T09:04:12.8015390+00:00" />
+  <TestSettings name="default" id="8a6cf941-b596-4128-a994-62c58b789c42">
+    <Deployment runDeploymentRoot="_runner_2026-11-20_09_04_12" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="f635c8de-dd15-473b-8176-d5222cdc06d9" testId="88834390-3e01-7f09-99e8-0d3c7a87bf98" testName="Acme.Greeter.Tests.GreeterTests.Data(v: &quot;a.b&quot;)" computerName="runner" duration="00:00:00.0060000" startTime="2026-11-20T09:04:12.7282270+00:00" endTime="2026-11-20T09:04:12.7392230+00:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f635c8de-dd15-473b-8176-d5222cdc06d9" />
+    <UnitTestResult executionId="65853cf0-60cc-4bc8-b930-2cff29d27294" testId="e40bc9a8-fc50-6300-8ce3-e3a279310747" testName="Acme.Greeter.Tests.GreeterTests.Fails" computerName="runner" duration="00:00:00.0030000" startTime="2026-11-20T09:04:12.7430550+00:00" endTime="2026-11-20T09:04:12.7541460+00:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="65853cf0-60cc-4bc8-b930-2cff29d27294">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ
+           ↓ (pos 0)
+Expected: "x"
+Actual:   "y"
+           ↑ (pos 0)</Message>
+          <StackTrace>   at Acme.Greeter.Tests.GreeterTests.Fails() in /w/tests/Acme.Greeter.Tests/UnitTest1.cs:line 9
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="600efcd8-c5ef-40f6-b55e-39ff3105b32b" testId="db0cad1c-20bb-d2f2-b045-47fcd70a079d" testName="Acme.Greeter.Tests.GreeterTests.GreetsByName" computerName="runner" duration="00:00:00.0010000" startTime="2026-11-20T09:04:12.7546000+00:00" endTime="2026-11-20T09:04:12.7550310+00:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="600efcd8-c5ef-40f6-b55e-39ff3105b32b" />
+    <UnitTestResult executionId="35a29e17-0456-4d9e-88c3-af9aef9f2b0b" testId="b6e6dc6f-afa5-6559-6175-e57a529ebbfd" testName="Acme.Greeter.Tests.GreeterTests.Skipped" computerName="runner" duration="00:00:00.0010000" startTime="2026-11-20T09:04:12.7424110+00:00" endTime="2026-11-20T09:04:12.7427110+00:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="NotExecuted" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="35a29e17-0456-4d9e-88c3-af9aef9f2b0b">
+      <Output>
+        <ErrorInfo>
+          <Message>not ready</Message>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Acme.Greeter.Tests.GreeterTests.Fails" storage="/w/Acme.Greeter.Tests.dll" id="e40bc9a8-fc50-6300-8ce3-e3a279310747">
+      <Execution id="65853cf0-60cc-4bc8-b930-2cff29d27294" />
+      <TestMethod codeBase="/w/Acme.Greeter.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Acme.Greeter.Tests.GreeterTests" name="Fails" />
+    </UnitTest>
+    <UnitTest name="Acme.Greeter.Tests.GreeterTests.Data(v: &quot;a.b&quot;)" storage="/w/Acme.Greeter.Tests.dll" id="88834390-3e01-7f09-99e8-0d3c7a87bf98">
+      <Execution id="f635c8de-dd15-473b-8176-d5222cdc06d9" />
+      <TestMethod codeBase="/w/Acme.Greeter.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Acme.Greeter.Tests.GreeterTests" name="Data" />
+    </UnitTest>
+    <UnitTest name="Acme.Greeter.Tests.GreeterTests.GreetsByName" storage="/w/Acme.Greeter.Tests.dll" id="db0cad1c-20bb-d2f2-b045-47fcd70a079d">
+      <Execution id="600efcd8-c5ef-40f6-b55e-39ff3105b32b" />
+      <TestMethod codeBase="/w/Acme.Greeter.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Acme.Greeter.Tests.GreeterTests" name="GreetsByName" />
+    </UnitTest>
+    <UnitTest name="Acme.Greeter.Tests.GreeterTests.Skipped" storage="/w/Acme.Greeter.Tests.dll" id="b6e6dc6f-afa5-6559-6175-e57a529ebbfd">
+      <Execution id="35a29e17-0456-4d9e-88c3-af9aef9f2b0b" />
+      <TestMethod codeBase="/w/Acme.Greeter.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Acme.Greeter.Tests.GreeterTests" name="Skipped" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="88834390-3e01-7f09-99e8-0d3c7a87bf98" executionId="f635c8de-dd15-473b-8176-d5222cdc06d9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e40bc9a8-fc50-6300-8ce3-e3a279310747" executionId="65853cf0-60cc-4bc8-b930-2cff29d27294" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="db0cad1c-20bb-d2f2-b045-47fcd70a079d" executionId="600efcd8-c5ef-40f6-b55e-39ff3105b32b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b6e6dc6f-afa5-6559-6175-e57a529ebbfd" executionId="35a29e17-0456-4d9e-88c3-af9aef9f2b0b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="4" executed="3" passed="2" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v4.0.1+0f7d528729 (64-bit .NET 10.0.15)
+[xUnit.net 00:00:00.29]   Discovering: Acme.Greeter.Tests
+[xUnit.net 00:00:00.41]   Discovered:  Acme.Greeter.Tests
+[xUnit.net 00:00:00.53]   Starting:    Acme.Greeter.Tests
+[xUnit.net 00:00:00.59]       not ready
+[xUnit.net 00:00:00.60]       Assert.Equal() Failure: Strings differ
+[xUnit.net 00:00:00.60]                  ↓ (pos 0)
+[xUnit.net 00:00:00.60]       Expected: "x"
+[xUnit.net 00:00:00.60]       Actual:   "y"
+[xUnit.net 00:00:00.60]                  ↑ (pos 0)
+[xUnit.net 00:00:00.60]       Stack Trace:
+[xUnit.net 00:00:00.60]         /w/tests/Acme.Greeter.Tests/UnitTest1.cs(9,0): at Acme.Greeter.Tests.GreeterTests.Fails()
+[xUnit.net 00:00:00.60]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+[xUnit.net 00:00:00.60]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.61]   Finished:    Acme.Greeter.Tests (ID = 'f647f941efa65c6fd86688809449fda65107c3551b81878f5441fc3657708398')
+Test 'Acme.Greeter.Tests.GreeterTests.Skipped' was skipped in the test run.
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="runner" outcome="Warning" timestamp="2026-11-20T09:04:12.7448940+00:00">
+        <Text>[xUnit.net 00:00:00.59]     Acme.Greeter.Tests.GreeterTests.Skipped [SKIP]</Text>
+      </RunInfo>
+      <RunInfo computerName="runner" outcome="Error" timestamp="2026-11-20T09:04:12.7567510+00:00">
+        <Text>[xUnit.net 00:00:00.60]     Acme.Greeter.Tests.GreeterTests.Fails [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

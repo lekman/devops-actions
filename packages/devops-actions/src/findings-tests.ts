@@ -4,9 +4,16 @@
  * Findings producer for the `quality` job. Parses:
  *   - JUnit XML     -> test summary (pass/fail/error/skip) + failing tests
  *   - LCOV info     -> line coverage % (bun, jest, vitest, c8)
- *   - Cobertura XML -> line coverage % (pytest-cov, coverage.py)
- *   - Lint log      -> error table (ESLint, Biome, ruff, black, generic)
- *   - Typecheck log -> error table (tsc, mypy)
+ *   - Cobertura XML -> line coverage % (pytest-cov, coverage.py, coverlet,
+ *                      Microsoft code coverage)
+ *   - JaCoCo XML    -> line coverage % (JaCoCo, Kover)
+ *   - Lint log      -> error table (ESLint, Biome, ruff, black, ktlint,
+ *                      detekt, google-java-format, dotnet format, generic)
+ *   - Typecheck log -> error table (tsc, mypy, kotlinc, javac, C# compiler)
+ *
+ * JUnit and coverage inputs each take one path or several, and a directory
+ * stands for every report below it, because Gradle and Maven write one
+ * JUnit file per test class and one coverage report per module.
  *
  * Writes a compact markdown summary to `--out` for embedding inside the
  * quality-gate <details> body. Missing inputs degrade gracefully.
@@ -14,6 +21,23 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import {
+  COVERAGE_THRESHOLD,
+  combineCoverage,
+  expandReportPaths,
+  readAll,
+} from "./coverage.js";
+import type { CoverageSummary, FileCoverage } from "./coverage.js";
+
+export type { CoverageSummary, FileCoverage } from "./coverage.js";
+export {
+  parseCobertura,
+  parseCoberturaLowCoverage,
+  parseJacoco,
+  parseJacocoLowCoverage,
+  parseLcov,
+  parseLcovLowCoverage,
+} from "./coverage.js";
 
 // ---- Types ----
 
@@ -30,26 +54,13 @@ export interface TestSummary {
   skipped: number;
 }
 
-export interface CoverageSummary {
-  linesFound: number;
-  linesHit: number;
-}
-
 export interface Finding {
   file: string;
   message: string;
   level: "error" | "warning";
 }
 
-export interface FileCoverage {
-  file: string;
-  linesFound: number;
-  linesHit: number;
-  pct: number;
-}
-
 const MAX_FINDINGS = 20;
-const COVERAGE_THRESHOLD = 80;
 
 // ---- JUnit ----
 
@@ -65,13 +76,14 @@ function numericAttr(tag: string, name: string): number {
  * pytest leaves that element bare — `<testsuites name="pytest tests">` —
  * and writes the counts on each `<testsuite>` instead, so reading only the
  * root reports zero tests for a run that had plenty. When the root carries
- * no `tests` attribute, sum the suites.
+ * no `tests` attribute, sum the suites. Gradle's and Maven Surefire's
+ * per-class files have no `<testsuites>` root at all, only one
+ * `<testsuite>`, which the same sum reads.
  */
 export function parseJunit(xml: string): TestSummary | null {
   const root = xml.match(/<testsuites\b[^>]*>/);
-  if (!root) return null;
 
-  if (/\btests="\d+"/.test(root[0])) {
+  if (root && /\btests="\d+"/.test(root[0])) {
     return {
       tests: numericAttr(root[0], "tests"),
       failures: numericAttr(root[0], "failures"),
@@ -81,14 +93,35 @@ export function parseJunit(xml: string): TestSummary | null {
   }
 
   const total: TestSummary = { tests: 0, failures: 0, errors: 0, skipped: 0 };
+  let suites = 0;
   const suiteRe = /<testsuite\b[^>]*>/g;
   for (let m = suiteRe.exec(xml); m !== null; m = suiteRe.exec(xml)) {
+    suites += 1;
     total.tests += numericAttr(m[0], "tests");
     total.failures += numericAttr(m[0], "failures");
     total.errors += numericAttr(m[0], "errors");
     total.skipped += numericAttr(m[0], "skipped");
   }
-  return total;
+  return root || suites > 0 ? total : null;
+}
+
+/**
+ * Add up the totals of several JUnit files. Returns null when none of them
+ * was JUnit XML.
+ */
+export function sumJunit(xmls: readonly string[]): TestSummary | null {
+  let any = false;
+  const total: TestSummary = { tests: 0, failures: 0, errors: 0, skipped: 0 };
+  for (const xml of xmls) {
+    const summary = parseJunit(xml);
+    if (!summary) continue;
+    any = true;
+    total.tests += summary.tests;
+    total.failures += summary.failures;
+    total.errors += summary.errors;
+    total.skipped += summary.skipped;
+  }
+  return any ? total : null;
 }
 
 /**
@@ -134,127 +167,6 @@ export function parseJunitFailures(xml: string): Finding[] {
   return findings;
 }
 
-/**
- * Parse LCOV info format. Sum `LF:` (lines found) and `LH:` (lines hit)
- * across every record in the file — one record per source file, delimited
- * by `end_of_record`.
- */
-export function parseLcov(info: string): CoverageSummary | null {
-  let linesFound = 0;
-  let linesHit = 0;
-  let seenAny = false;
-  for (const line of info.split("\n")) {
-    if (line.startsWith("LF:")) {
-      linesFound += Number(line.slice(3));
-      seenAny = true;
-    } else if (line.startsWith("LH:")) {
-      linesHit += Number(line.slice(3));
-    }
-  }
-  if (!seenAny) return null;
-  return { linesFound, linesHit };
-}
-
-/**
- * Parse LCOV per-file. Returns files below COVERAGE_THRESHOLD, sorted
- * by coverage % ascending (worst first), capped at MAX_FINDINGS.
- */
-export function parseLcovLowCoverage(info: string): FileCoverage[] {
-  const files: FileCoverage[] = [];
-  let currentFile = "";
-  let lf = 0;
-  let lh = 0;
-
-  for (const line of info.split("\n")) {
-    if (line.startsWith("SF:")) {
-      currentFile = line.slice(3);
-      lf = 0;
-      lh = 0;
-    } else if (line.startsWith("LF:")) {
-      lf = Number(line.slice(3));
-    } else if (line.startsWith("LH:")) {
-      lh = Number(line.slice(3));
-    } else if (line === "end_of_record" && currentFile && lf > 0) {
-      const pct = (lh / lf) * 100;
-      if (pct < COVERAGE_THRESHOLD) {
-        files.push({ file: currentFile, linesFound: lf, linesHit: lh, pct });
-      }
-      currentFile = "";
-    }
-  }
-
-  files.sort((a, b) => a.pct - b.pct);
-  return files.slice(0, MAX_FINDINGS);
-}
-
-// ---- Cobertura ----
-
-/**
- * Parse a Cobertura XML report, the format pytest-cov and coverage.py
- * write. The root element carries `lines-valid` and `lines-covered`:
- *
- *   <coverage lines-valid="8" lines-covered="7" line-rate="0.875" ...>
- *
- * Verified against coverage.py 7.16.0. Writers that emit only `line-rate`
- * give a percentage with no denominator, so the `<line hits="...">`
- * elements are summed instead rather than inventing a total.
- */
-export function parseCobertura(xml: string): CoverageSummary | null {
-  const root = xml.match(/<coverage\b[^>]*>/);
-  if (!root) return null;
-
-  if (/\blines-valid="\d+"/.test(root[0])) {
-    return {
-      linesFound: numericAttr(root[0], "lines-valid"),
-      linesHit: numericAttr(root[0], "lines-covered"),
-    };
-  }
-
-  let linesFound = 0;
-  let linesHit = 0;
-  const lineRe = /<line\b[^>]*\bhits="(\d+)"[^>]*\/?>/g;
-  for (let m = lineRe.exec(xml); m !== null; m = lineRe.exec(xml)) {
-    linesFound += 1;
-    if (Number(m[1]) > 0) linesHit += 1;
-  }
-  if (linesFound === 0) return null;
-  return { linesFound, linesHit };
-}
-
-/**
- * Parse Cobertura per-file coverage. Returns files below
- * COVERAGE_THRESHOLD, worst first, capped at MAX_FINDINGS.
- *
- * Per-class elements carry `line-rate` but no line counts, so the counts
- * come from the `<line hits="...">` children inside each `<class>`.
- */
-export function parseCoberturaLowCoverage(xml: string): FileCoverage[] {
-  const files: FileCoverage[] = [];
-  const classRe = /<class\b([^>]*)>([\s\S]*?)<\/class>/g;
-
-  for (let m = classRe.exec(xml); m !== null; m = classRe.exec(xml)) {
-    const file = m[1].match(/\bfilename="([^"]*)"/)?.[1];
-    if (!file) continue;
-
-    let linesFound = 0;
-    let linesHit = 0;
-    const lineRe = /<line\b[^>]*\bhits="(\d+)"[^>]*\/?>/g;
-    for (let l = lineRe.exec(m[2]); l !== null; l = lineRe.exec(m[2])) {
-      linesFound += 1;
-      if (Number(l[1]) > 0) linesHit += 1;
-    }
-    if (linesFound === 0) continue;
-
-    const pct = (linesHit / linesFound) * 100;
-    if (pct < COVERAGE_THRESHOLD) {
-      files.push({ file, linesFound, linesHit, pct });
-    }
-  }
-
-  files.sort((a, b) => a.pct - b.pct);
-  return files.slice(0, MAX_FINDINGS);
-}
-
 // ---- Lint log ----
 
 /**
@@ -291,14 +203,37 @@ export function parseLintLog(log: string): Finding[] {
       continue;
     }
 
-    // black: `would reformat src/app.py`
-    const black = line.match(/^would reformat (\S+\.py)$/);
-    if (black) {
+    // black: `would reformat src/app.py`. The jvm-quality action writes
+    // the same line for each file google-java-format would change.
+    const reformat = line.match(/^would reformat (\S+\.(py|java))$/);
+    if (reformat) {
+      const tool = reformat[2] === "py" ? "black" : "google-java-format";
       findings.push({
-        file: black[1],
-        message: "would be reformatted by black",
+        file: reformat[1],
+        message: `would be reformatted by ${tool}`,
         level: "error",
       });
+      continue;
+    }
+
+    // ktlint plain reporter and detekt's console output:
+    //   `src/App.kt:8:19: Missing spacing after ":" (standard:colon-spacing)`
+    //   `/abs/src/App.kt:14:21: This expression contains a magic number. [MagicNumber]`
+    const kotlin = line.match(/^(\S+\.kts?):(\d+):(\d+):\s+(\S.*)$/);
+    if (kotlin) {
+      findings.push({
+        file: `${kotlin[1]}:${kotlin[2]}:${kotlin[3]}`,
+        message: kotlin[4].trim(),
+        level: "error",
+      });
+      continue;
+    }
+
+    // dotnet format and MSBuild:
+    //   `/abs/src/App.cs(8,25): error WHITESPACE: Fix whitespace formatting. [/abs/App.csproj]`
+    const msbuild = matchMsbuild(line);
+    if (msbuild) {
+      findings.push(msbuild);
       continue;
     }
 
@@ -353,16 +288,19 @@ export function parseLintLog(log: string): Finding[] {
       });
     }
   }
-  return findings;
+  return dedupe(findings);
 }
 
 // ---- Typecheck log ----
 
 /**
- * Parse typechecker output. Two formats:
+ * Parse typechecker and compiler output:
  *
- *   tsc   `src/file.ts(12,5): error TS1234: message`
- *   mypy  `src/app.py:12: error: message  [assignment]`
+ *   tsc      `src/file.ts(12,5): error TS1234: message`
+ *   mypy     `src/app.py:12: error: message  [assignment]`
+ *   kotlinc  see matchJvmCompiler
+ *   javac    see matchJvmCompiler
+ *   C#       see matchMsbuild
  *
  * mypy's `note:` lines are context for the error above them, not findings
  * of their own, so they are left out.
@@ -398,7 +336,122 @@ export function parseTypecheckLog(log: string): Finding[] {
     });
   }
 
-  return findings;
+  for (const line of log.split("\n")) {
+    if (findings.length >= MAX_FINDINGS) break;
+    const jvm = matchJvmCompiler(line);
+    if (jvm) {
+      findings.push(jvm);
+      continue;
+    }
+    const msbuild = matchMsbuild(line);
+    if (msbuild) findings.push(msbuild);
+  }
+
+  return dedupe(findings);
+}
+
+/**
+ * Match a Kotlin or Java compiler diagnostic, as Gradle or Maven prints it:
+ *
+ *   kotlinc (Gradle)  `e: file:///abs/App.kt:3:5 Unresolved reference 'x'.`
+ *   kotlinc (Maven)   `[ERROR] file:///abs/App.kt:3:5 Unresolved reference 'x'.`
+ *   javac (Gradle)    `/abs/App.java:3: error: cannot find symbol`
+ *   javac (Maven)     `[ERROR] /abs/App.java:[3,5] cannot find symbol`
+ *
+ * Warnings are left out. The jvm-quality action does not turn them into
+ * errors, so listing them under "Type errors" would misreport the build.
+ */
+export function matchJvmCompiler(line: string): Finding | null {
+  const kotlinc = line.match(
+    /^(?:e:|\[ERROR\])\s+(?:file:\/\/)?(\S+\.kts?):(\d+):(\d+)\s+(\S.*)$/,
+  );
+  if (kotlinc) {
+    return {
+      file: `${kotlinc[1]}:${kotlinc[2]}:${kotlinc[3]}`,
+      message: kotlinc[4].trim(),
+      level: "error",
+    };
+  }
+
+  const javacGradle = line.match(/^(\S+\.java):(\d+):\s+error:\s+(\S.*)$/);
+  if (javacGradle) {
+    return {
+      file: `${javacGradle[1]}:${javacGradle[2]}`,
+      message: javacGradle[3].trim(),
+      level: "error",
+    };
+  }
+
+  const javacMaven = line.match(
+    /^\[ERROR\]\s+(\S+\.java):\[(\d+),(\d+)\]\s+(\S.*)$/,
+  );
+  if (javacMaven) {
+    return {
+      file: `${javacMaven[1]}:${javacMaven[2]}:${javacMaven[3]}`,
+      message: javacMaven[4].trim(),
+      level: "error",
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Match an MSBuild diagnostic for a C#, F# or VB file, as the C# compiler,
+ * analyzers and `dotnet format` print it:
+ *
+ *   `/abs/App.cs(8,25): error CS0103: The name 'x' does not exist [/abs/App.csproj]`
+ *
+ * The trailing project path is dropped. Only errors are kept: the
+ * dotnet-quality build treats warnings as errors, so a warning that
+ * matters arrives as an error.
+ */
+export function matchMsbuild(line: string): Finding | null {
+  const m = line.match(
+    /^\s*(\S.*?\.(?:cs|fs|vb))\((\d+),(\d+)(?:,\d+,\d+)?\):\s+error\s+([A-Za-z]+\d*):\s+(\S.*?)(?:\s+\[[^\]]+\])?$/,
+  );
+  if (!m) return null;
+  return {
+    file: `${m[1]}:${m[2]}:${m[3]}`,
+    message: `${m[4]}: ${m[5].trim()}`,
+    level: "error",
+  };
+}
+
+/**
+ * Drop repeated findings. MSBuild prints every error twice, once as it
+ * happens and once in the summary at the end of the build.
+ */
+function dedupe(findings: Finding[]): Finding[] {
+  const seen = new Set<string>();
+  return findings.filter((f) => {
+    const key = `${f.file}|${f.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Make a path from a log relative to the checkout, so the gate comment
+ * shows `src/App.kt` rather than the runner's absolute path. Kotlin
+ * compilers prefix paths with `file://`, which is removed too.
+ *
+ * @param file Path as the tool printed it, possibly with `:line:col`.
+ * @param workspace Absolute checkout path, usually GITHUB_WORKSPACE.
+ */
+export function relativeToWorkspace(file: string, workspace: string): string {
+  let out = file.replace(/^file:\/\//, "");
+  if (workspace) {
+    const prefix = workspace.endsWith("/") ? workspace : `${workspace}/`;
+    if (out.startsWith(prefix)) {
+      out = out.slice(prefix.length);
+    } else if (prefix.startsWith("/") && out.startsWith(prefix.slice(1))) {
+      // coverlet writes source paths without their leading slash.
+      out = out.slice(prefix.length - 1);
+    }
+  }
+  return out;
 }
 
 // ---- Formatting ----
@@ -485,6 +538,16 @@ function readIfPresent(path: string | undefined): string | null {
   }
 }
 
+/**
+ * Read every report a path list names. Each argument may hold several
+ * paths separated by newlines or commas, and a directory stands for every
+ * matching file below it.
+ */
+function readReports(spec: string | undefined, extensions: string[]): string[] {
+  if (!spec) return [];
+  return readAll(expandReportPaths(spec, extensions));
+}
+
 /* eslint-disable no-console -- CLI entrypoint, console output is intentional */
 function main(): void {
   const args = new Map<string, string>();
@@ -494,31 +557,33 @@ function main(): void {
     if (key && value) args.set(key, value);
   }
 
-  const junit = readIfPresent(args.get("junit"));
-  const lcov = readIfPresent(args.get("lcov"));
-  const coverageXml = readIfPresent(args.get("coverage-xml"));
+  const junits = readReports(args.get("junit"), [".xml"]);
+  const lcovs = readReports(args.get("lcov"), [".info"]);
+  const coberturas = readReports(args.get("coverage-xml"), [".xml"]);
+  const jacocos = readReports(args.get("jacoco-xml"), [".xml"]);
   const lintLog = readIfPresent(args.get("lint-log"));
   const typecheckLog = readIfPresent(args.get("typecheck-log"));
   const out = args.get("out");
+  const workspace = process.env.GITHUB_WORKSPACE ?? "";
 
-  const tests = junit ? parseJunit(junit) : null;
-  const testFailures = junit ? parseJunitFailures(junit) : [];
-  const lintFindings = lintLog ? parseLintLog(lintLog) : [];
-  const typecheckFindings = typecheckLog ? parseTypecheckLog(typecheckLog) : [];
+  const tests = sumJunit(junits);
+  const testFailures = junits
+    .flatMap(parseJunitFailures)
+    .slice(0, MAX_FINDINGS);
+  const relative = (items: Finding[]): Finding[] =>
+    items.map((f) => ({ ...f, file: relativeToWorkspace(f.file, workspace) }));
+  const lintFindings = relative(lintLog ? parseLintLog(lintLog) : []);
+  const typecheckFindings = relative(
+    typecheckLog ? parseTypecheckLog(typecheckLog) : [],
+  );
 
-  // LCOV wins when a repo emits both, because it is what the node path has
-  // always produced. A Python-only repo has no LCOV and falls through to
-  // Cobertura.
-  const coverage = lcov
-    ? parseLcov(lcov)
-    : coverageXml
-      ? parseCobertura(coverageXml)
-      : null;
-  const lowCoverageFiles = lcov
-    ? parseLcovLowCoverage(lcov)
-    : coverageXml
-      ? parseCoberturaLowCoverage(coverageXml)
-      : [];
+  // One source of coverage, in this order. LCOV wins when a repo emits
+  // several, because it is what the node path has always produced. A
+  // Python-only repo has no LCOV and falls through to Cobertura, and a JVM
+  // repo to JaCoCo.
+  const reports =
+    lcovs.length > 0 ? lcovs : coberturas.length > 0 ? coberturas : jacocos;
+  const { summary: coverage, lowCoverageFiles } = combineCoverage(reports);
 
   const markdown = formatFindings(
     tests,
@@ -526,7 +591,10 @@ function main(): void {
     testFailures,
     lintFindings,
     typecheckFindings,
-    lowCoverageFiles,
+    lowCoverageFiles.map((f) => ({
+      ...f,
+      file: relativeToWorkspace(f.file, workspace),
+    })),
   );
   if (!markdown) {
     console.log("findings-tests: nothing to report; skipping write");

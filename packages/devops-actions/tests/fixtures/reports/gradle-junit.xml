@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.acme.greeter.GreeterTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-11-20T08:36:48.678Z" hostname="runner" time="0.018">
+  <properties/>
+  <testcase name="greetsByName()" classname="com.acme.greeter.GreeterTest" time="0.012"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

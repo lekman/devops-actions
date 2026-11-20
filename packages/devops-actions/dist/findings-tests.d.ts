@@ -4,13 +4,23 @@
  * Findings producer for the `quality` job. Parses:
  *   - JUnit XML     -> test summary (pass/fail/error/skip) + failing tests
  *   - LCOV info     -> line coverage % (bun, jest, vitest, c8)
- *   - Cobertura XML -> line coverage % (pytest-cov, coverage.py)
- *   - Lint log      -> error table (ESLint, Biome, ruff, black, generic)
- *   - Typecheck log -> error table (tsc, mypy)
+ *   - Cobertura XML -> line coverage % (pytest-cov, coverage.py, coverlet,
+ *                      Microsoft code coverage)
+ *   - JaCoCo XML    -> line coverage % (JaCoCo, Kover)
+ *   - Lint log      -> error table (ESLint, Biome, ruff, black, ktlint,
+ *                      detekt, google-java-format, dotnet format, generic)
+ *   - Typecheck log -> error table (tsc, mypy, kotlinc, javac, C# compiler)
+ *
+ * JUnit and coverage inputs each take one path or several, and a directory
+ * stands for every report below it, because Gradle and Maven write one
+ * JUnit file per test class and one coverage report per module.
  *
  * Writes a compact markdown summary to `--out` for embedding inside the
  * quality-gate <details> body. Missing inputs degrade gracefully.
  */
+import type { CoverageSummary, FileCoverage } from "./coverage.js";
+export type { CoverageSummary, FileCoverage } from "./coverage.js";
+export { parseCobertura, parseCoberturaLowCoverage, parseJacoco, parseJacocoLowCoverage, parseLcov, parseLcovLowCoverage, } from "./coverage.js";
 export interface TestSummary {
     tests: number;
     failures: number;
@@ -23,20 +33,10 @@ export interface TestSummary {
     errors: number;
     skipped: number;
 }
-export interface CoverageSummary {
-    linesFound: number;
-    linesHit: number;
-}
 export interface Finding {
     file: string;
     message: string;
     level: "error" | "warning";
-}
-export interface FileCoverage {
-    file: string;
-    linesFound: number;
-    linesHit: number;
-    pct: number;
 }
 /**
  * Parse totals from JUnit XML.
@@ -45,9 +45,16 @@ export interface FileCoverage {
  * pytest leaves that element bare — `<testsuites name="pytest tests">` —
  * and writes the counts on each `<testsuite>` instead, so reading only the
  * root reports zero tests for a run that had plenty. When the root carries
- * no `tests` attribute, sum the suites.
+ * no `tests` attribute, sum the suites. Gradle's and Maven Surefire's
+ * per-class files have no `<testsuites>` root at all, only one
+ * `<testsuite>`, which the same sum reads.
  */
 export declare function parseJunit(xml: string): TestSummary | null;
+/**
+ * Add up the totals of several JUnit files. Returns null when none of them
+ * was JUnit XML.
+ */
+export declare function sumJunit(xmls: readonly string[]): TestSummary | null;
 /**
  * Walk `<testcase>` elements that hold a `<failure>` or `<error>` child.
  *
@@ -62,36 +69,6 @@ export declare function parseJunit(xml: string): TestSummary | null;
  */
 export declare function parseJunitFailures(xml: string): Finding[];
 /**
- * Parse LCOV info format. Sum `LF:` (lines found) and `LH:` (lines hit)
- * across every record in the file — one record per source file, delimited
- * by `end_of_record`.
- */
-export declare function parseLcov(info: string): CoverageSummary | null;
-/**
- * Parse LCOV per-file. Returns files below COVERAGE_THRESHOLD, sorted
- * by coverage % ascending (worst first), capped at MAX_FINDINGS.
- */
-export declare function parseLcovLowCoverage(info: string): FileCoverage[];
-/**
- * Parse a Cobertura XML report, the format pytest-cov and coverage.py
- * write. The root element carries `lines-valid` and `lines-covered`:
- *
- *   <coverage lines-valid="8" lines-covered="7" line-rate="0.875" ...>
- *
- * Verified against coverage.py 7.16.0. Writers that emit only `line-rate`
- * give a percentage with no denominator, so the `<line hits="...">`
- * elements are summed instead rather than inventing a total.
- */
-export declare function parseCobertura(xml: string): CoverageSummary | null;
-/**
- * Parse Cobertura per-file coverage. Returns files below
- * COVERAGE_THRESHOLD, worst first, capped at MAX_FINDINGS.
- *
- * Per-class elements carry `line-rate` but no line counts, so the counts
- * come from the `<line hits="...">` children inside each `<class>`.
- */
-export declare function parseCoberturaLowCoverage(xml: string): FileCoverage[];
-/**
  * Parse lint output for error lines. Handles ESLint stylish, Biome, ruff,
  * black, and generic `file:line:col: error message` formats.
  *
@@ -101,13 +78,48 @@ export declare function parseCoberturaLowCoverage(xml: string): FileCoverage[];
  */
 export declare function parseLintLog(log: string): Finding[];
 /**
- * Parse typechecker output. Two formats:
+ * Parse typechecker and compiler output:
  *
- *   tsc   `src/file.ts(12,5): error TS1234: message`
- *   mypy  `src/app.py:12: error: message  [assignment]`
+ *   tsc      `src/file.ts(12,5): error TS1234: message`
+ *   mypy     `src/app.py:12: error: message  [assignment]`
+ *   kotlinc  see matchJvmCompiler
+ *   javac    see matchJvmCompiler
+ *   C#       see matchMsbuild
  *
  * mypy's `note:` lines are context for the error above them, not findings
  * of their own, so they are left out.
  */
 export declare function parseTypecheckLog(log: string): Finding[];
+/**
+ * Match a Kotlin or Java compiler diagnostic, as Gradle or Maven prints it:
+ *
+ *   kotlinc (Gradle)  `e: file:///abs/App.kt:3:5 Unresolved reference 'x'.`
+ *   kotlinc (Maven)   `[ERROR] file:///abs/App.kt:3:5 Unresolved reference 'x'.`
+ *   javac (Gradle)    `/abs/App.java:3: error: cannot find symbol`
+ *   javac (Maven)     `[ERROR] /abs/App.java:[3,5] cannot find symbol`
+ *
+ * Warnings are left out. The jvm-quality action does not turn them into
+ * errors, so listing them under "Type errors" would misreport the build.
+ */
+export declare function matchJvmCompiler(line: string): Finding | null;
+/**
+ * Match an MSBuild diagnostic for a C#, F# or VB file, as the C# compiler,
+ * analyzers and `dotnet format` print it:
+ *
+ *   `/abs/App.cs(8,25): error CS0103: The name 'x' does not exist [/abs/App.csproj]`
+ *
+ * The trailing project path is dropped. Only errors are kept: the
+ * dotnet-quality build treats warnings as errors, so a warning that
+ * matters arrives as an error.
+ */
+export declare function matchMsbuild(line: string): Finding | null;
+/**
+ * Make a path from a log relative to the checkout, so the gate comment
+ * shows `src/App.kt` rather than the runner's absolute path. Kotlin
+ * compilers prefix paths with `file://`, which is removed too.
+ *
+ * @param file Path as the tool printed it, possibly with `:line:col`.
+ * @param workspace Absolute checkout path, usually GITHUB_WORKSPACE.
+ */
+export declare function relativeToWorkspace(file: string, workspace: string): string;
 export declare function formatFindings(tests: TestSummary | null, coverage: CoverageSummary | null, testFailures?: Finding[], lintFindings?: Finding[], typecheckFindings?: Finding[], lowCoverageFiles?: FileCoverage[]): string;
