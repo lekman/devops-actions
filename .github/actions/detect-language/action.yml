@@ -1,6 +1,8 @@
 # Reports which languages the checked-out repository declares, and for
 # Python which package manager owns it, which interpreter it pins, and
-# which CI phases its pyproject.toml configures.
+# which CI phases its pyproject.toml configures. For the JVM it reports the
+# build tool and the Java version, and for .NET the SDK version and the
+# test platform.
 #
 # Callers gate their per-language steps on these outputs, so a TypeScript
 # repo runs no Python steps and a Python repo runs no bun steps.
@@ -13,11 +15,23 @@
 #
 # A repo declaring no manifest at all is not an error. Every output comes
 # back false or empty, and every step gated on them is skipped.
+#
+# Java, Kotlin and C# sources and .NET project files usually sit below the
+# root, so they are found by walking the tree. The walk skips build output
+# and dependency folders (build, target, bin, obj, node_modules, dot
+# folders) and stops 10 levels down or after 50,000 files.
+#
+# Java version, first match wins: .java-version, a `java` line in
+# .tool-versions, `[tools] java` in mise.toml or .mise.toml, the Gradle
+# toolchain (`jvmToolchain(21)` or `JavaLanguageVersion.of(21)`), the Maven
+# compiler release (`maven.compiler.release`, `<release>`). A project that
+# pins none gets Java 17, and `jvm-version-source` reads "default".
 
 name: Detect Language
 description: >-
   Detect the languages a repository declares, plus Python package manager,
-  interpreter version, and configured phases. Requires a prior checkout.
+  interpreter version and configured phases, the JVM build tool and Java
+  version, and the .NET SDK version. Requires a prior checkout.
 
 inputs:
   working-directory:
@@ -27,7 +41,11 @@ inputs:
 
 outputs:
   languages:
-    description: 'Comma-separated detected languages, e.g. "node,python". Empty when none.'
+    description: >-
+      Comma-separated detected languages, in the order node, python, java,
+      kotlin, csharp, e.g. "node,python". node and python come from a
+      manifest at the root; java, kotlin and csharp from .java, .kt and .cs
+      sources anywhere below it. Empty when none.
     value: ${{ steps.detect.outputs.languages }}
   has-node:
     description: '"true" when package.json is present.'
@@ -60,6 +78,40 @@ outputs:
   python-lint-tools:
     description: 'Comma-separated configured lint tools, in run order, e.g. "ruff,black".'
     value: ${{ steps.detect.outputs.python-lint-tools }}
+  has-jvm:
+    description: >-
+      "true" when settings.gradle(.kts), build.gradle(.kts) or pom.xml is in
+      the working directory.
+    value: ${{ steps.detect.outputs.has-jvm }}
+  jvm-build-tool:
+    description: >-
+      "gradle" or "maven". Gradle wins when both build files are present.
+      Empty when no JVM build was detected.
+    value: ${{ steps.detect.outputs.jvm-build-tool }}
+  jvm-version:
+    description: >-
+      Java feature release to build with, e.g. "21". Defaults to "17" when
+      the project pins none. Empty when no JVM build was detected.
+    value: ${{ steps.detect.outputs.jvm-version }}
+  jvm-version-source:
+    description: >-
+      Where jvm-version came from: .java-version, .tool-versions, mise.toml,
+      .mise.toml, build.gradle.kts, build.gradle, pom.xml, or "default".
+    value: ${{ steps.detect.outputs.jvm-version-source }}
+  has-dotnet:
+    description: '"true" when a .sln, .slnx, .csproj, .fsproj or .vbproj file sits at or below the working directory.'
+    value: ${{ steps.detect.outputs.has-dotnet }}
+  dotnet-version:
+    description: >-
+      SDK version from the nearest global.json's sdk.version, else
+      "<major>.<minor>.x" of the newest TargetFramework (net8.0 gives
+      "8.0.x"). Empty when neither names one.
+    value: ${{ steps.detect.outputs.dotnet-version }}
+  dotnet-test-runner:
+    description: >-
+      "mtp" when global.json sets test.runner to Microsoft.Testing.Platform,
+      else "vstest". Empty when no .NET project was detected.
+    value: ${{ steps.detect.outputs.dotnet-test-runner }}
 
 runs:
   using: composite
