@@ -30,10 +30,22 @@ Each line shows the job name and its result. The arrow links to the relevant KB 
 
 The gate evaluates two groups:
 
-| Group               | Jobs                           | Rule                                                                                   |
-| ------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| Required            | `quality`, `security`          | Must be `success`. Any other result is a failure                                       |
-| Conditional (infra) | `trunk-check`, `infra-preview` | Must be `success` when infrastructure files changed. `skipped` is acceptable otherwise |
+| Group               | Jobs                                                                  | Rule                                                                                             |
+| ------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Required            | `quality`, `security`                                                 | Must be `success`. Any other result is a failure                                                 |
+| Conditional (infra) | `trunk-check`, `infra-preview`                                        | Must be `success` when infrastructure files changed. `skipped` is acceptable otherwise           |
+| Conditional         | `audit`, `jvm-quality`, `jvm-audit`, `dotnet-quality`, `dotnet-audit` | Must be `success` when they run. `skipped` is acceptable, for a repository without that language |
+
+The gate knows a label, a hint and a troubleshooting page for each of these
+job names. A calling workflow gets the deep link to the job's log when its
+job `name:` matches the label:
+
+| Job              | Label                                 | Page              |
+| ---------------- | ------------------------------------- | ----------------- |
+| `jvm-quality`    | QA: JVM Format, Analysis, Build, Test | [JVM](jvm.md)     |
+| `jvm-audit`      | Security: JVM Dependency Audit        | [JVM](jvm.md)     |
+| `dotnet-quality` | QA: .NET Build, Format, Test          | [.NET](dotnet.md) |
+| `dotnet-audit`   | Security: .NET Dependency Audit       | [.NET](dotnet.md) |
 
 ## The Opaque Quality Job
 

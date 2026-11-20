@@ -1,11 +1,12 @@
 # Security Scan Failures
 
 Covers Semgrep SAST findings in the **security** CI job, and dependency
-advisories in the **audit** job.
+advisories in the **audit**, **jvm-audit** and **dotnet-audit** jobs.
 
 The security job runs `semgrep scan --error` with three rulesets:
 `p/security-audit`, `p/secrets`, `p/typescript`. A repository containing
-Python adds `p/python`. Any finding causes the job to exit non-zero.
+Python adds `p/python`, Java adds `p/java`, Kotlin adds `p/kotlin`, and C#
+adds `p/csharp`. Any finding causes the job to exit non-zero.
 
 ## Common Findings
 
@@ -24,6 +25,10 @@ Python adds `p/python`. Any finding causes the job to exit non-zero.
 | `p/security-audit` | OWASP Top 10, injection, authentication, access control    |
 | `p/secrets`        | Hardcoded credentials, API keys, tokens                    |
 | `p/typescript`     | TypeScript-specific patterns (type coercion, unsafe casts) |
+| `p/python`         | Python, when `languages` holds `python`                    |
+| `p/java`           | Java, when `languages` holds `java`                        |
+| `p/kotlin`         | Kotlin, when `languages` holds `kotlin`                    |
+| `p/csharp`         | C#, when `languages` holds `csharp`                        |
 
 Custom rulesets can be specified via the `rulesets` input on the security action.
 
@@ -76,3 +81,9 @@ Advisories do not fail the job. An audit that could not run does, because
 the gate row cannot distinguish an audit that found nothing from one that
 never ran. See [Python Projects](python.md) for how dependencies are
 exported and how to change that default.
+
+JVM and .NET repositories get their own audit jobs. **jvm-audit** runs
+OSV-Scanner against Gradle lockfiles or Maven poms, and **dotnet-audit**
+runs the .NET SDK's package audit. Both report in the same table and treat
+an audit that could not run the same way. See [JVM Projects](jvm.md#dependency-audit)
+and [.NET Projects](dotnet.md#dependency-audit).

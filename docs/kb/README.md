@@ -4,20 +4,22 @@ Quick reference for resolving CI failures from the devops-toolkit pipeline. Find
 
 ## Pages
 
-| Page                                        | CI Job               | Failure Category | When to Read                                               |
-| ------------------------------------------- | -------------------- | ---------------- | ---------------------------------------------------------- |
-| [Build](build.md)                           | quality              | build            | `turbo build` or `tsc` compilation errors                  |
-| [Typecheck](typecheck.md)                   | quality              | build            | `tsc --noEmit` or `mypy` type errors                       |
-| [Lint](lint.md)                             | quality, trunk-check | lint             | ESLint, ruff, black, or Trunk linter violations            |
-| [Tests](tests.md)                           | quality              | test             | `bun test` or `pytest` failures, coverage issues           |
-| [Python Projects](python.md)                | quality, audit       | build, test      | Anything specific to a Python repository                   |
-| [Security](security.md)                     | security, audit      | security         | Semgrep SAST findings, dependency advisories               |
-| [Secrets](secrets.md)                       | security             | secrets          | Gitleaks secret detection findings                         |
-| [Trunk](trunk.md)                           | trunk-check          | lint             | Trunk-managed linter failures (shellcheck, yamllint, etc.) |
-| [Infrastructure](infra.md)                  | infra-preview        | infra            | Pulumi preview/deploy or Azure OIDC failures               |
-| [Azure Functions](functions.md)             | function-publish     | publish          | Publishing a Python project to a Flex Consumption app      |
-| [Branch Maintenance](branch-maintenance.md) | branch-check         | —                | Merge conflicts, stale branches, auto-update issues        |
-| [Quality Gate](quality-gate.md)             | quality-gate         | —                | Understanding the pass/fail decision                       |
+| Page                                        | CI Job                       | Failure Category  | When to Read                                                     |
+| ------------------------------------------- | ---------------------------- | ----------------- | ---------------------------------------------------------------- |
+| [Build](build.md)                           | quality                      | build             | `turbo build` or `tsc` compilation errors                        |
+| [Typecheck](typecheck.md)                   | quality                      | build             | `tsc --noEmit` or `mypy` type errors                             |
+| [Lint](lint.md)                             | quality, trunk-check         | lint              | ESLint, ruff, black, or Trunk linter violations                  |
+| [Tests](tests.md)                           | quality                      | test              | `bun test` or `pytest` failures, coverage issues                 |
+| [Python Projects](python.md)                | quality, audit               | build, test       | Anything specific to a Python repository                         |
+| [JVM Projects](jvm.md)                      | jvm-quality, jvm-audit       | build, test, lint | Anything specific to a Kotlin or Java repository (Gradle, Maven) |
+| [.NET Projects](dotnet.md)                  | dotnet-quality, dotnet-audit | build, test, lint | Anything specific to a C# repository                             |
+| [Security](security.md)                     | security, audit              | security          | Semgrep SAST findings, dependency advisories                     |
+| [Secrets](secrets.md)                       | security                     | secrets           | Gitleaks secret detection findings                               |
+| [Trunk](trunk.md)                           | trunk-check                  | lint              | Trunk-managed linter failures (shellcheck, yamllint, etc.)       |
+| [Infrastructure](infra.md)                  | infra-preview                | infra             | Pulumi preview/deploy or Azure OIDC failures                     |
+| [Azure Functions](functions.md)             | function-publish             | publish           | Publishing a Python project to a Flex Consumption app            |
+| [Branch Maintenance](branch-maintenance.md) | branch-check                 | —                 | Merge conflicts, stale branches, auto-update issues              |
+| [Quality Gate](quality-gate.md)             | quality-gate                 | —                 | Understanding the pass/fail decision                             |
 
 ## How This Works
 
