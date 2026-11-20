@@ -1,0 +1,146 @@
+# Builds a .NET solution with analyzers and warnings as errors, checks its
+# formatting, runs its tests with coverage, and holds line coverage to a
+# floor. Captures the output for the quality gate.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - detect-language, for dotnet-version.
+#
+# Phases, each run even when an earlier one fails (see run.sh):
+#
+#   Restore          dotnet restore
+#   Build            dotnet build with the strict defaults in strict.props:
+#                    TreatWarningsAsErrors, AnalysisLevel latest-recommended,
+#                    EnforceCodeStyleInBuild, Nullable
+#   Format           dotnet format --verify-no-changes (whitespace, style,
+#                    analyzers)
+#   Test             dotnet test with TRX results and Cobertura coverage, on
+#                    VSTest or the Microsoft Testing Platform
+#   Coverage floor   line coverage at or above coverage-threshold
+#
+# A repository's own configuration wins: a property it sets is not
+# overridden, its .editorconfig replaces the default one, and a coverlet
+# Threshold replaces the floor. README.md has the details.
+
+name: .NET Quality
+description: >-
+  Strict build, format check, tests and an 80% line coverage floor for a
+  .NET solution, on VSTest or the Microsoft Testing Platform. Requires a
+  prior checkout.
+
+inputs:
+  dotnet-version:
+    description: >-
+      SDK version for actions/setup-dotnet when the repository has no
+      global.json, e.g. "10.0.x". From the detect-language action. A
+      global.json, when present, decides instead.
+    required: false
+    default: ""
+  working-directory:
+    description: Directory holding the solution or projects, repository-relative.
+    required: false
+    default: "."
+  coverage-threshold:
+    description: >-
+      Minimum line coverage in percent. Not applied when a project sets
+      coverlet's Threshold property.
+    required: false
+    default: "80"
+  build-args:
+    description: >-
+      Extra arguments for dotnet build and dotnet test, separated by
+      spaces, e.g. "-c Release".
+    required: false
+    default: ""
+  findings-dir:
+    description: >-
+      Directory to write build.log, format.log and test.log into, for
+      findings-tests.
+    required: true
+  results-dir:
+    description: >-
+      Directory for TRX results, the JUnit file and Cobertura coverage.
+      Empty uses a folder under the runner's temp directory.
+    required: false
+    default: ""
+
+outputs:
+  restore-result:
+    description: '"passed" or "failed".'
+    value: ${{ steps.run.outputs.restore-result }}
+  build-result:
+    description: '"passed" or "failed": compiler and analyzer diagnostics, with warnings as errors.'
+    value: ${{ steps.run.outputs.build-result }}
+  format-result:
+    description: '"passed" or "failed": dotnet format --verify-no-changes.'
+    value: ${{ steps.run.outputs.format-result }}
+  test-result:
+    description: '"passed" or "failed".'
+    value: ${{ steps.run.outputs.test-result }}
+  coverage-result:
+    description: '"passed", "failed" (below the floor, or no report), or "skipped" (a project owns its threshold).'
+    value: ${{ steps.run.outputs.coverage-result }}
+  coverage-percent:
+    description: Line coverage in percent, one decimal. Empty when no report was found.
+    value: ${{ steps.run.outputs.coverage-percent }}
+  junit-path:
+    description: >-
+      Path of the JUnit XML file converted from the TRX results. Empty when
+      no TRX was written. Pass to findings-tests' junit-path.
+    value: ${{ steps.run.outputs.junit-path }}
+  coverage-paths:
+    description: Paths of the Cobertura coverage files, one per line. Pass to findings-tests' coverage-xml-path.
+    value: ${{ steps.run.outputs.coverage-paths }}
+  build-log:
+    description: Path of the restore and build log. Pass to findings-tests' typecheck-log.
+    value: ${{ steps.run.outputs.build-log }}
+  format-log:
+    description: Path of the dotnet format log. Pass to findings-tests' lint-log.
+    value: ${{ steps.run.outputs.format-log }}
+  test-log:
+    description: Path of the dotnet test log.
+    value: ${{ steps.run.outputs.test-log }}
+  test-runner:
+    description: '"vstest" or "mtp", the test platform the tests ran on.'
+    value: ${{ steps.inspect.outputs.test-runner }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read the project's own configuration
+      id: inspect
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: node "${{ github.action_path }}/dist/project-inspect.js" --root . --kind dotnet
+
+    # global.json decides the SDK when there is one. The target framework
+    # channels are installed beside it, so a test project on an older
+    # framework finds its runtime.
+    - name: Set up .NET
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      with:
+        global-json-file: ${{ steps.inspect.outputs.global-json }}
+        dotnet-version: |
+          ${{ steps.inspect.outputs.global-json == '' && inputs.dotnet-version || '' }}
+          ${{ steps.inspect.outputs.framework-channels }}
+
+    - name: Restore, build, format, test, coverage
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TARGET: ${{ steps.inspect.outputs.target }}
+        PROJECTS: ${{ steps.inspect.outputs.projects }}
+        TEST_RUNNER: ${{ steps.inspect.outputs.test-runner }}
+        HAS_EDITORCONFIG: ${{ steps.inspect.outputs.has-editorconfig }}
+        OWNS_COVERAGE_FLOOR: ${{ steps.inspect.outputs.owns-coverage-floor }}
+        OWNS_RUN_SETTINGS: ${{ steps.inspect.outputs.owns-run-settings }}
+        USES_COVERLET: ${{ steps.inspect.outputs.uses-coverlet-collector }}
+        FINDINGS_DIR: ${{ inputs.findings-dir }}
+        RESULTS_DIR: ${{ inputs.results-dir || format('{0}/dotnet-quality-results', runner.temp) }}
+        COVERAGE_THRESHOLD: ${{ inputs.coverage-threshold }}
+        EXTRA_ARGS: ${{ inputs.build-args }}
+        ACTION_PATH: ${{ github.action_path }}
+        DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+        DOTNET_NOLOGO: "1"
+      run: '"$ACTION_PATH/run.sh"'

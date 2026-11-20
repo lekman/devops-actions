@@ -1,0 +1,72 @@
+# Default .editorconfig from the dotnet-quality action. The action copies
+# it into a project that has no .editorconfig of its own, at the project
+# directory or above it, for the length of the CI run. Commit your own
+# .editorconfig to replace it; this file is never merged with yours.
+#
+# Formatting is checked by `dotnet format --verify-no-changes`. The style
+# rules marked `warning` also run in the build, because the action builds
+# with EnforceCodeStyleInBuild and TreatWarningsAsErrors.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,xml,csproj,fsproj,vbproj,props,targets,slnx,config,nuspec}]
+indent_size = 2
+
+[*.{cs,vb}]
+# Ordering of using directives
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# this. and Me. only where needed
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+
+# Language keywords instead of framework type names (int, not Int32)
+dotnet_style_predefined_type_for_locals_parameters_members = true:suggestion
+dotnet_style_predefined_type_for_member_access = true:suggestion
+
+# Fields that are only set in the constructor are readonly (IDE0044)
+dotnet_style_readonly_field = true:warning
+dotnet_diagnostic.IDE0044.severity = warning
+
+# Private members that are never used or never read (IDE0051, IDE0052)
+dotnet_diagnostic.IDE0051.severity = warning
+dotnet_diagnostic.IDE0052.severity = warning
+
+[*.cs]
+# File-scoped namespaces, as the .NET templates write them (IDE0161)
+csharp_style_namespace_declarations = file_scoped:warning
+dotnet_diagnostic.IDE0161.severity = warning
+
+# Braces on every if, else, for, foreach, while and using (IDE0011)
+csharp_prefer_braces = true:warning
+dotnet_diagnostic.IDE0011.severity = warning
+
+# Allman braces and the spacing the .NET templates use
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_preserve_single_line_statements = false
+csharp_preserve_single_line_blocks = true
+
+# var where the type is evident, as the .NET templates write it
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion

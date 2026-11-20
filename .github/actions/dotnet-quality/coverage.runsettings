@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Passed to VSTest by the dotnet-quality action when a project names no run
+  settings of its own. Microsoft's code coverage collector counts the test
+  assembly as covered code by default, which raises the number without
+  testing anything, so the test assembly is left out. Cobertura is the
+  format the coverage floor and findings-tests read.
+-->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <IncludeTestAssembly>false</IncludeTestAssembly>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
