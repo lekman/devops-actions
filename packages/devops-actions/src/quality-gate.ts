@@ -18,6 +18,10 @@ const JOB_KB_PAGE: Record<string, string> = {
   quality: "quality-gate.md",
   security: "security.md",
   audit: "security.md",
+  "jvm-quality": "jvm.md",
+  "jvm-audit": "jvm.md",
+  "dotnet-quality": "dotnet.md",
+  "dotnet-audit": "dotnet.md",
   "trunk-check": "trunk.md",
   "infra-preview": "infra.md",
   deliver: "quality-gate.md",
@@ -33,6 +37,16 @@ const JOB_RELATED_KB: Record<string, Array<[string, string]>> = {
   ],
   security: [["secrets.md", "Secrets"]],
   audit: [["security.md", "Security"]],
+  "jvm-quality": [
+    ["tests.md", "Tests"],
+    ["lint.md", "Lint"],
+  ],
+  "jvm-audit": [["security.md", "Security"]],
+  "dotnet-quality": [
+    ["tests.md", "Tests"],
+    ["lint.md", "Lint"],
+  ],
+  "dotnet-audit": [["security.md", "Security"]],
   "trunk-check": [
     ["lint.md", "Lint"],
     ["trunk.md", "Trunk"],
@@ -149,6 +163,10 @@ const JOB_LABEL: Record<string, string> = {
   quality: "QA: Build, Typecheck, Test",
   security: "Security: SAST & Secret Detection",
   audit: "Security: Dependency Audit",
+  "jvm-quality": "QA: JVM Format, Analysis, Build, Test",
+  "jvm-audit": "Security: JVM Dependency Audit",
+  "dotnet-quality": "QA: .NET Build, Format, Test",
+  "dotnet-audit": "Security: .NET Dependency Audit",
   "trunk-check": "QA: Linters, Static Code Analysis",
   "infra-preview": "IAC: Preview",
   deliver: "CI/CD: Continuous Delivery",
@@ -163,6 +181,14 @@ const JOB_HINT: Record<string, string> = {
     "Semgrep SAST (security-audit, secrets, typescript rulesets) and Gitleaks secret detection.",
   audit:
     "Dependency advisories from pip-audit. An audit that could not run reports as indeterminate, not as a pass.",
+  "jvm-quality":
+    "ktlint or google-java-format, detekt, the Gradle or Maven build with its tests, and an 80% line coverage floor. The job summary shows which phase failed.",
+  "jvm-audit":
+    "Dependency advisories from OSV-Scanner, read from Gradle lockfiles or Maven poms. An audit that could not run reports as indeterminate, not as a pass.",
+  "dotnet-quality":
+    "dotnet build with analyzers and warnings as errors, dotnet format --verify-no-changes, dotnet test, and an 80% line coverage floor. The job summary shows which phase failed.",
+  "dotnet-audit":
+    "NuGet advisories from dotnet package list --vulnerable, direct and transitive. An audit that could not run reports as indeterminate, not as a pass.",
   "trunk-check":
     "Linters and static analysis (shellcheck, yamllint, markdownlint, actionlint, hadolint, checkov, osv-scanner, trufflehog, prettier).",
   "infra-preview": "Pulumi preview for infrastructure changes (Azure OIDC).",
