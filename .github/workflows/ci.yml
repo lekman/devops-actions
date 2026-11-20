@@ -49,6 +49,11 @@ jobs:
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
       - name: actionlint
         run: actionlint
+      # actionlint checks the scripts inside workflow files. The composite
+      # actions keep their longer scripts in .sh files beside action.yml,
+      # which it does not read.
+      - name: shellcheck
+        run: shellcheck .github/actions/*/*.sh
 
   # Runs the security action from this checkout, so a change to it is
   # exercised before anyone pins the new SHA.
@@ -58,7 +63,286 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The test fixtures put Java, Kotlin and C# sources in this checkout,
+      # so the scan runs with their Semgrep rulesets too.
+      - id: lang
+        uses: ./.github/actions/detect-language
+      - name: Languages include the fixtures
+        env:
+          LANGUAGES: ${{ steps.lang.outputs.languages }}
+        run: |
+          echo "languages=$LANGUAGES"
+          for want in java kotlin csharp; do
+            case ",$LANGUAGES," in
+              *",$want,"*) ;;
+              *) echo "::error::detect-language did not report $want at the root"; exit 1 ;;
+            esac
+          done
       - uses: ./.github/actions/security
         with:
+          languages: ${{ steps.lang.outputs.languages }}
           semgrep-json-output: ${{ runner.temp }}/semgrep-results.json
           gitleaks-json-output: ${{ runner.temp }}/gitleaks-results.json
+
+  # Runs detect-language, jvm-quality, findings-tests and jvm-audit from this
+  # checkout against the projects in test-fixtures. A passing project must
+  # pass every phase. A broken one (*-bad) must fail in exactly the phases
+  # it breaks, which proves each check can fail the job.
+  jvm:
+    name: JVM (${{ matrix.fixture }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: jvm-gradle
+            os: ubuntu-latest
+            build-tool: gradle
+            languages: kotlin
+            java-version: "17"
+            expect: passed,passed,passed,passed
+            audit: true
+          - fixture: jvm-gradle
+            os: macos-latest
+            build-tool: gradle
+            languages: kotlin
+            java-version: "17"
+            expect: passed,passed,passed,passed
+            audit: true
+          - fixture: jvm-gradle-bad
+            os: ubuntu-latest
+            build-tool: gradle
+            languages: kotlin
+            java-version: "17"
+            # ktlint and detekt findings, tests pass, 14% coverage.
+            expect: failed,failed,passed,failed
+            audit: false
+          - fixture: jvm-maven
+            os: ubuntu-latest
+            build-tool: maven
+            languages: java
+            java-version: "21"
+            # Error Prone runs inside the build, so the analysis phase of
+            # the action itself has nothing to run for Java.
+            expect: passed,skipped,passed,passed
+            audit: true
+          - fixture: jvm-maven-bad
+            os: ubuntu-latest
+            build-tool: maven
+            languages: java
+            java-version: "21"
+            # google-java-format finding, Error Prone and NullAway errors
+            # stop the compile, so no coverage report exists.
+            expect: failed,skipped,failed,failed
+            audit: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: lang
+        uses: ./.github/actions/detect-language
+        with:
+          working-directory: test-fixtures/${{ matrix.fixture }}
+
+      - name: detect-language reports the project
+        env:
+          GOT: ${{ steps.lang.outputs.has-jvm }},${{ steps.lang.outputs.jvm-build-tool }},${{ steps.lang.outputs.jvm-version }},${{ steps.lang.outputs.languages }}
+          WANT: true,${{ matrix.build-tool }},${{ matrix.java-version }},${{ matrix.languages }}
+        run: |
+          echo "got  $GOT"
+          echo "want $WANT"
+          [ "$GOT" = "$WANT" ]
+
+      - id: quality
+        uses: ./.github/actions/jvm-quality
+        continue-on-error: true
+        with:
+          build-tool: ${{ steps.lang.outputs.jvm-build-tool }}
+          java-version: ${{ steps.lang.outputs.jvm-version }}
+          working-directory: test-fixtures/${{ matrix.fixture }}
+          findings-dir: ${{ runner.temp }}/findings-raw
+
+      - name: Each phase has the expected result
+        env:
+          GOT: ${{ steps.quality.outputs.format-result }},${{ steps.quality.outputs.analysis-result }},${{ steps.quality.outputs.build-result }},${{ steps.quality.outputs.coverage-result }}
+          WANT: ${{ matrix.expect }}
+          OUTCOME: ${{ steps.quality.outcome }}
+          PERCENT: ${{ steps.quality.outputs.coverage-percent }}
+          VERSIONS: ${{ steps.quality.outputs.tool-versions }}
+        run: |
+          echo "format,analysis,build,coverage"
+          echo "got  $GOT (step $OUTCOME, coverage ${PERCENT:-none})"
+          echo "want $WANT"
+          echo "tools: $VERSIONS"
+          [ "$GOT" = "$WANT" ]
+          case "$WANT" in
+            *failed*) [ "$OUTCOME" = "failure" ] ;;
+            *) [ "$OUTCOME" = "success" ] ;;
+          esac
+
+      - name: Findings
+        uses: ./.github/actions/findings-tests
+        with:
+          junit-path: ${{ steps.quality.outputs.junit-paths }}
+          jacoco-path: ${{ steps.quality.outputs.coverage-paths }}
+          lint-log: ${{ steps.quality.outputs.lint-log }}
+          typecheck-log: ${{ steps.quality.outputs.build-log }}
+          out-path: ${{ runner.temp }}/findings/jvm-quality.md
+
+      - name: The findings name what failed
+        env:
+          FINDINGS: ${{ runner.temp }}/findings/jvm-quality.md
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          cat "$FINDINGS"
+          case "$FIXTURE" in
+            jvm-gradle | jvm-maven)
+              grep -q "1/1 tests passed" "$FINDINGS"
+              grep -q "lines covered" "$FINDINGS"
+              ;;
+            jvm-gradle-bad)
+              grep -q "standard:colon-spacing" "$FINDINGS"
+              grep -q "MagicNumber" "$FINDINGS"
+              grep -q "Low coverage files" "$FINDINGS"
+              ;;
+            jvm-maven-bad)
+              grep -q "google-java-format" "$FINDINGS"
+              grep -q "DeadException" "$FINDINGS"
+              grep -q "NullAway" "$FINDINGS"
+              ;;
+          esac
+
+      - id: audit
+        if: matrix.audit
+        uses: ./.github/actions/jvm-audit
+        with:
+          build-tool: ${{ steps.lang.outputs.jvm-build-tool }}
+          java-version: ${{ steps.lang.outputs.jvm-version }}
+          working-directory: test-fixtures/${{ matrix.fixture }}
+          out-path: ${{ runner.temp }}/findings/jvm-audit.md
+
+      - name: The audit ran and found nothing
+        if: matrix.audit
+        env:
+          STATUS: ${{ steps.audit.outputs.status }}
+          FINDINGS: ${{ runner.temp }}/findings/jvm-audit.md
+        run: |
+          cat "$FINDINGS"
+          [ "$STATUS" = "clean" ]
+
+  # The same for .NET: one passing project per test platform, and one that
+  # breaks formatting, an analyzer rule and the coverage floor.
+  dotnet:
+    name: .NET (${{ matrix.fixture }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: dotnet-mtp
+            os: ubuntu-latest
+            runner: mtp
+            dotnet-version: 10.0.100
+            expect: passed,passed,passed,passed,passed
+            audit: true
+          - fixture: dotnet-mtp
+            os: macos-latest
+            runner: mtp
+            dotnet-version: 10.0.100
+            expect: passed,passed,passed,passed,passed
+            audit: false
+          - fixture: dotnet-vstest
+            os: ubuntu-latest
+            runner: vstest
+            dotnet-version: 10.0.x
+            expect: passed,passed,passed,passed,passed
+            audit: true
+          - fixture: dotnet-bad
+            os: ubuntu-latest
+            runner: mtp
+            dotnet-version: 10.0.100
+            # CA1305 fails the strict build, whitespace fails the format
+            # check, the test passes, coverage is 9%.
+            expect: passed,failed,failed,passed,failed
+            audit: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: lang
+        uses: ./.github/actions/detect-language
+        with:
+          working-directory: test-fixtures/${{ matrix.fixture }}
+
+      - name: detect-language reports the project
+        env:
+          GOT: ${{ steps.lang.outputs.has-dotnet }},${{ steps.lang.outputs.dotnet-version }},${{ steps.lang.outputs.dotnet-test-runner }},${{ steps.lang.outputs.languages }}
+          WANT: true,${{ matrix.dotnet-version }},${{ matrix.runner }},csharp
+        run: |
+          echo "got  $GOT"
+          echo "want $WANT"
+          [ "$GOT" = "$WANT" ]
+
+      - id: quality
+        uses: ./.github/actions/dotnet-quality
+        continue-on-error: true
+        with:
+          dotnet-version: ${{ steps.lang.outputs.dotnet-version }}
+          working-directory: test-fixtures/${{ matrix.fixture }}
+          findings-dir: ${{ runner.temp }}/findings-raw
+
+      - name: Each phase has the expected result
+        env:
+          GOT: ${{ steps.quality.outputs.restore-result }},${{ steps.quality.outputs.build-result }},${{ steps.quality.outputs.format-result }},${{ steps.quality.outputs.test-result }},${{ steps.quality.outputs.coverage-result }}
+          WANT: ${{ matrix.expect }}
+          OUTCOME: ${{ steps.quality.outcome }}
+          PERCENT: ${{ steps.quality.outputs.coverage-percent }}
+          RUNNER: ${{ steps.quality.outputs.test-runner }}
+        run: |
+          echo "restore,build,format,test,coverage"
+          echo "got  $GOT (step $OUTCOME, $RUNNER, coverage ${PERCENT:-none})"
+          echo "want $WANT"
+          [ "$GOT" = "$WANT" ]
+          case "$WANT" in
+            *failed*) [ "$OUTCOME" = "failure" ] ;;
+            *) [ "$OUTCOME" = "success" ] ;;
+          esac
+
+      - name: Findings
+        uses: ./.github/actions/findings-tests
+        with:
+          junit-path: ${{ steps.quality.outputs.junit-path }}
+          coverage-xml-path: ${{ steps.quality.outputs.coverage-paths }}
+          lint-log: ${{ steps.quality.outputs.format-log }}
+          typecheck-log: ${{ steps.quality.outputs.build-log }}
+          out-path: ${{ runner.temp }}/findings/dotnet-quality.md
+
+      - name: The findings name what failed
+        env:
+          FINDINGS: ${{ runner.temp }}/findings/dotnet-quality.md
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          cat "$FINDINGS"
+          grep -q "1/1 tests passed" "$FINDINGS"
+          if [ "$FIXTURE" = "dotnet-bad" ]; then
+            grep -q "WHITESPACE" "$FINDINGS"
+            grep -q "CA1305" "$FINDINGS"
+            grep -q "Low coverage files" "$FINDINGS"
+          fi
+
+      - id: audit
+        if: matrix.audit
+        uses: ./.github/actions/dotnet-audit
+        with:
+          dotnet-version: ${{ steps.lang.outputs.dotnet-version }}
+          working-directory: test-fixtures/${{ matrix.fixture }}
+          out-path: ${{ runner.temp }}/findings/dotnet-audit.md
+
+      - name: The audit ran and found nothing
+        if: matrix.audit
+        env:
+          STATUS: ${{ steps.audit.outputs.status }}
+          FINDINGS: ${{ runner.temp }}/findings/dotnet-audit.md
+        run: |
+          cat "$FINDINGS"
+          [ "$STATUS" = "clean" ]
