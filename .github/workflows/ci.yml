@@ -55,6 +55,63 @@ jobs:
       - name: shellcheck
         run: shellcheck .github/actions/*/*.sh
 
+  # Runs the trunk action from this checkout on a repository built from each
+  # fixture. trunk-bun loads its Trunk plugin from node_modules, so Trunk
+  # stops with a config error unless the action runs bun install first.
+  # trunk-plain has no Bun lockfile, and the action must install nothing.
+  # The fixture's linter leaves a marker file, which shows Trunk ran it.
+  trunk:
+    name: Trunk (${{ matrix.fixture }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: trunk-bun
+            installs: true
+          - fixture: trunk-plain
+            installs: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .actions
+
+      # The action works on the repository at the workspace root, so the
+      # fixture becomes that repository. This checkout stays beside it, and
+      # git ignores it.
+      - name: Make the fixture the repository
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          cp -R ".actions/test-fixtures/$FIXTURE/." .
+          git init -q
+          printf '.actions/\nnode_modules/\n.fixture-lint-ran\n' >> .git/info/exclude
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.invalid commit -qm fixture
+
+      - uses: ./.actions/.github/actions/trunk
+        with:
+          check-mode: all
+
+      - name: Trunk ran the fixture's linter, after the expected install
+        env:
+          INSTALLS: ${{ matrix.installs }}
+        run: |
+          if [ ! -f .fixture-lint-ran ]; then
+            echo "::error::Trunk did not run fixture-lint"
+            exit 1
+          fi
+          if [ "$INSTALLS" = true ]; then
+            test -L node_modules/.bin/fixture-lint
+          elif [ -e node_modules ]; then
+            echo "::error::the action installed dependencies for a repository without a Bun lockfile"
+            exit 1
+          fi
+
   # Runs the security action from this checkout, so a change to it is
   # exercised before anyone pins the new SHA.
   security:

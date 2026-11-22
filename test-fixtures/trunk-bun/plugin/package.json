@@ -1,0 +1,8 @@
+{
+  "name": "fixture-trunk-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "bin": {
+    "fixture-lint": "./scripts/fixture-lint.sh"
+  }
+}

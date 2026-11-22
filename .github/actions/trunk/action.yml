@@ -2,15 +2,28 @@
 # actionlint, hadolint, checkov, osv-scanner, trufflehog, prettier) on the
 # PR diff or last commit. Posts inline annotations via the Checks API.
 #
+# A repository with bun.lock or bun.lockb at its root gets its dependencies
+# installed before Trunk starts. A Trunk plugin loaded as a `local:` source
+# from node_modules, or a linter that runs a binary from node_modules/.bin,
+# then finds its files. Without them Trunk stops with a config error for the
+# missing plugin folder. A repository without a Bun lockfile installs nothing.
+#
 # Prerequisites:
 #   - The repository must already be checked out with fetch-depth: 0
 #     (Trunk needs the base commit to compute the PR diff).
 #   - The calling job must have checks: write permission for annotations.
+#   - The calling job needs packages: read when the lockfile names a package
+#     from GitHub Packages. bun install gets the job's token as GITHUB_TOKEN
+#     and GH_TOKEN, the names a repository's .npmrc or bunfig.toml refers to.
+#   - Bun on PATH at the version the repository pins, which the setup-runtime
+#     action installs. When no bun is on PATH, this action installs the latest
+#     Bun release.
 
 name: Trunk Check
 description: >-
-  Run Trunk-managed linters. Requires a prior checkout with fetch-depth: 0
-  and checks: write permission on the calling job.
+  Install a Bun repository's dependencies, then run Trunk-managed linters.
+  Requires a prior checkout with fetch-depth: 0 and checks: write permission
+  on the calling job.
 
 inputs:
   check-mode:
@@ -20,6 +33,34 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Find a Bun lockfile
+      id: bun
+      shell: bash
+      run: |
+        set -euo pipefail
+        lockfile=false
+        if [ -f bun.lock ] || [ -f bun.lockb ]; then
+          lockfile=true
+        fi
+        on_path=false
+        if command -v bun >/dev/null 2>&1; then
+          on_path=true
+        fi
+        echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+        echo "on-path=$on_path" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Bun
+      if: steps.bun.outputs.lockfile == 'true' && steps.bun.outputs.on-path == 'false'
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+    - name: Install dependencies
+      if: steps.bun.outputs.lockfile == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: bun install --frozen-lockfile
+
     - name: Trunk check
       # v1 at 2026-05-14. Every action trunk-action calls internally is pinned
       # to a SHA from this commit on, which an organisation that requires SHA
