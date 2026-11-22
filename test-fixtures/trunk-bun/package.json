@@ -1,0 +1,10 @@
+{
+  "name": "trunk-bun-fixture",
+  "private": true,
+  "workspaces": [
+    "plugin"
+  ],
+  "devDependencies": {
+    "fixture-trunk-plugin": "workspace:*"
+  }
+}

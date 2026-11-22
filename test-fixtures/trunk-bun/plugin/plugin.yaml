@@ -1,0 +1,17 @@
+# A Trunk plugin that a repository loads from node_modules, the way
+# northbridge-security's standards.trunk is loaded. Trunk can read it only
+# after bun install, and its linter runs a binary from node_modules/.bin.
+version: 0.1
+lint:
+  definitions:
+    - name: fixture-lint
+      files: [ALL]
+      suggest_if: never
+      commands:
+        - name: lint
+          output: pass_fail
+          target: .
+          run: ${workspace}/node_modules/.bin/fixture-lint ${workspace}
+          success_codes: [0, 1]
+          disable_upstream: true
+          cache_results: false

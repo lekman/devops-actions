@@ -4,6 +4,16 @@ Covers Trunk-managed linter failures in the **trunk-check** CI job.
 
 The trunk-check job runs `trunk check` on the PR diff (or last commit on push). Trunk orchestrates multiple linters and posts inline annotations via the GitHub Checks API. This job only runs if `.trunk/trunk.yaml` exists in the repo.
 
+## Dependencies Before Trunk
+
+When the repository has `bun.lock` or `bun.lockb` at its root, the action runs `bun install --frozen-lockfile` before `trunk check`. A Trunk plugin loaded as a `local:` source from `node_modules`, or a linter that runs a binary from `node_modules/.bin`, needs those files. A repository without a Bun lockfile installs nothing.
+
+| Symptom                                                                 | Cause                                                              | Fix                                                                                                                  |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `'node_modules/...' does not exist` (`trunk/config-error`)              | The plugin source is in `node_modules`, and no Bun lockfile exists | Commit `bun.lock`, so the action installs the dependencies                                                           |
+| `bun install` fails with 401 or 403 for an `@scope` package             | The job cannot read the package from GitHub Packages               | Give the calling job `packages: read`, and give the repository Actions access to the package in its package settings |
+| `bun install` fails with `lockfile had changes, but lockfile is frozen` | `bun.lock` does not match `package.json`                           | Run `bun install` locally and commit `bun.lock`                                                                      |
+
 ## Per-Linter Failures
 
 ### shellcheck (Shell Scripts)

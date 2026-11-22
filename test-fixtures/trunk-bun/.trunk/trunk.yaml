@@ -1,0 +1,10 @@
+version: 0.1
+cli:
+  version: 1.25.0
+plugins:
+  sources:
+    - id: fixture
+      local: node_modules/fixture-trunk-plugin
+lint:
+  enabled:
+    - fixture-lint

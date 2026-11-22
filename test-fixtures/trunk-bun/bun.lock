@@ -1,0 +1,22 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "trunk-bun-fixture",
+      "devDependencies": {
+        "fixture-trunk-plugin": "workspace:*",
+      },
+    },
+    "plugin": {
+      "name": "fixture-trunk-plugin",
+      "version": "0.0.0",
+      "bin": {
+        "fixture-lint": "./scripts/fixture-lint.sh",
+      },
+    },
+  },
+  "packages": {
+    "fixture-trunk-plugin": ["fixture-trunk-plugin@workspace:plugin"],
+  }
+}
