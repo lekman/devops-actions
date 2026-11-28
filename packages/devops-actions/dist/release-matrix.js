@@ -129,6 +129,11 @@ function detectLanguage(dir) {
         existsSync(resolve(dir, "setup.py"))) {
         return "python";
     }
+    // A crate is released by release-please (release-type rust, with the
+    // cargo-workspace plugin) and never published from here, so it is
+    // reported as rust and stays out of the npm publish steps.
+    if (existsSync(resolve(dir, "Cargo.toml")))
+        return "rust";
     if (existsSync(resolve(dir, "Chart.yaml")) ||
         existsSync(resolve(dir, "Chart.yml")) ||
         existsSync(resolve(dir, "chart.yaml")) ||

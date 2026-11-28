@@ -4,7 +4,8 @@
  * Detects which languages a repository declares, and for Python which
  * package manager owns it, which interpreter version it pins, and which
  * CI phases its `pyproject.toml` actually configures. For the JVM it
- * reports the build tool and Java version, and for .NET the SDK version.
+ * reports the build tool and Java version, for .NET the SDK version, and
+ * for Rust the toolchain the repository pins.
  *
  * Consumed by the `detect-language` composite action, whose outputs gate
  * the per-language steps in the `quality` job of `ci.yml`.
@@ -19,12 +20,15 @@ import { resolve } from "node:path";
 import { detectDotnet } from "./dotnet-detect.js";
 import { hasExtension, listFiles } from "./file-walk.js";
 import { detectJvm } from "./jvm-detect.js";
+import { detectRust } from "./rust-detect.js";
 import { getBoolean, getString, hasTable, parseToml } from "./toml-lite.js";
 import type { DotnetInfo } from "./dotnet-detect.js";
 import type { JvmInfo } from "./jvm-detect.js";
+import type { RustInfo } from "./rust-detect.js";
 import type { TomlDocument } from "./toml-lite.js";
 
-export type Language = "node" | "python" | "java" | "kotlin" | "csharp";
+export type Language =
+  "node" | "python" | "rust" | "java" | "kotlin" | "csharp";
 
 export type PythonPackageManager = "pip" | "pipenv" | "poetry" | "uv";
 
@@ -56,6 +60,10 @@ export interface DetectionResult {
   hasDotnet: boolean;
   /** Present only when `hasDotnet` is true. */
   dotnet?: DotnetInfo;
+  /** True when the directory holds a Cargo.toml, a package or a workspace. */
+  hasRust: boolean;
+  /** Present only when `hasRust` is true. */
+  rust?: RustInfo;
 }
 
 /** Source extension to the language it indicates, in `languages` order. */
@@ -73,6 +81,7 @@ const LANGUAGE_INDICATORS: ReadonlyArray<[string, Language]> = [
   ["package.json", "node"],
   ["pyproject.toml", "python"],
   ["setup.py", "python"],
+  ["Cargo.toml", "rust"],
 ];
 
 /** Lockfile to the package manager that writes it. Order is the priority. */
@@ -93,13 +102,14 @@ const LINT_TABLES: ReadonlyArray<[PythonLintTool, string]> = [
 /**
  * Probe a repository root and report what it declares.
  *
- * Node and Python are read from manifests at the root. JVM and .NET
+ * Node, Python and Rust are read from manifests at the root. JVM and .NET
  * sources and project files usually sit below it, so those are found by a
  * bounded walk of the tree (see file-walk).
  *
  * @param root Absolute path to the repository root.
- * @param stopAt Highest folder to look in for a .NET global.json, usually
- *   the repository root when `root` is a subfolder. Defaults to `root`.
+ * @param stopAt Highest folder to look in for a .NET global.json or a Rust
+ *   toolchain file, usually the repository root when `root` is a
+ *   subfolder. Defaults to `root`.
  */
 export function detect(root: string, stopAt: string = root): DetectionResult {
   const languages: Language[] = [];
@@ -118,6 +128,7 @@ export function detect(root: string, stopAt: string = root): DetectionResult {
   const hasPython = languages.includes("python");
   const jvm = detectJvm(root);
   const dotnet = detectDotnet(root, files, stopAt);
+  const rust = detectRust(root, stopAt);
 
   return {
     languages,
@@ -128,6 +139,8 @@ export function detect(root: string, stopAt: string = root): DetectionResult {
     ...(jvm ? { jvm } : {}),
     hasDotnet: dotnet !== null,
     ...(dotnet ? { dotnet } : {}),
+    hasRust: rust !== null,
+    ...(rust ? { rust } : {}),
   };
 }
 
@@ -266,7 +279,7 @@ function readPyproject(root: string): TomlDocument | null {
 /**
  * Render a detection result as GitHub Actions `key=value` output lines.
  * Every field is always emitted so a consuming step can read it without
- * first checking `has-python`, `has-jvm` or `has-dotnet`.
+ * first checking `has-python`, `has-jvm`, `has-dotnet` or `has-rust`.
  *
  * @param result Detection result.
  */
@@ -290,6 +303,12 @@ export function formatOutputs(result: DetectionResult): string {
     `has-dotnet=${result.hasDotnet}`,
     `dotnet-version=${result.dotnet?.version ?? ""}`,
     `dotnet-test-runner=${result.dotnet?.testRunner ?? ""}`,
+    `has-rust=${result.hasRust}`,
+    `rust-workspace=${result.rust?.workspace ?? false}`,
+    `rust-has-lockfile=${result.rust?.hasLockfile ?? false}`,
+    `rust-toolchain=${result.rust?.toolchain ?? ""}`,
+    `rust-toolchain-source=${result.rust?.toolchainSource ?? ""}`,
+    `rust-toolchain-file=${result.rust?.toolchainFile ?? ""}`,
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -304,8 +323,9 @@ function main(): void {
   }
 
   const root = resolve(args.get("root") ?? process.cwd());
-  // The SDK reads a global.json above the project too, so look up to the
-  // checkout root when the action runs in a subfolder.
+  // The SDK reads a global.json above the project too, and rustup and mise
+  // read a toolchain file above it, so look up to the checkout root when
+  // the action runs in a subfolder.
   const stopAt = resolve(process.env.GITHUB_WORKSPACE ?? root);
   const result = detect(root, stopAt);
   const outputs = formatOutputs(result);
@@ -315,7 +335,12 @@ function main(): void {
 
   if (result.languages.length === 0 && !result.hasJvm && !result.hasDotnet) {
     console.log(
-      `::notice::language-detect: no package.json, pyproject.toml, setup.py, JVM build, .NET project or Java, Kotlin or C# source at ${root}`,
+      `::notice::language-detect: no package.json, pyproject.toml, setup.py, Cargo.toml, JVM build, .NET project or Java, Kotlin or C# source at ${root}`,
+    );
+  }
+  if (result.rust && result.rust.toolchainSource === "") {
+    console.log(
+      `::warning::language-detect: Cargo.toml at ${root} but no pinned Rust toolchain. Add rust-toolchain.toml, or rust under [tools] in mise.toml.`,
     );
   }
   console.log(outputs.trimEnd());

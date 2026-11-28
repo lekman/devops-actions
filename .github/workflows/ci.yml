@@ -403,3 +403,123 @@ jobs:
         run: |
           cat "$FINDINGS"
           [ "$STATUS" = "clean" ]
+
+  # The same for Rust: a passing workspace on each runner family, including
+  # Linux on ARM64 like the self-hosted runners callers use, and one that
+  # breaks formatting, clippy and a test.
+  rust:
+    name: Rust (${{ matrix.fixture }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: rust-cargo
+            os: ubuntu-latest
+            expect: passed,passed,passed
+            audit: true
+          - fixture: rust-cargo
+            os: ubuntu-24.04-arm
+            expect: passed,passed,passed
+            audit: true
+          - fixture: rust-cargo
+            os: macos-latest
+            expect: passed,passed,passed
+            audit: false
+          - fixture: rust-cargo-bad
+            os: ubuntu-latest
+            # A formatting difference, clippy's needless_return under
+            # -D warnings, and a failing assertion.
+            expect: failed,failed,failed
+            audit: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: lang
+        uses: ./.github/actions/detect-language
+        with:
+          working-directory: test-fixtures/${{ matrix.fixture }}
+
+      - name: detect-language reports the project
+        env:
+          GOT: ${{ steps.lang.outputs.has-rust }},${{ steps.lang.outputs.rust-workspace }},${{ steps.lang.outputs.rust-has-lockfile }},${{ steps.lang.outputs.rust-toolchain }},${{ steps.lang.outputs.rust-toolchain-source }},${{ steps.lang.outputs.languages }}
+          WANT: true,true,true,1.100.0,rust-toolchain.toml,rust
+        run: |
+          echo "got  $GOT"
+          echo "want $WANT"
+          [ "$GOT" = "$WANT" ]
+
+      - id: quality
+        uses: ./.github/actions/rust-quality
+        continue-on-error: true
+        with:
+          working-directory: test-fixtures/${{ matrix.fixture }}
+          toolchain-source: ${{ steps.lang.outputs.rust-toolchain-source }}
+          findings-dir: ${{ runner.temp }}/findings-raw
+
+      - name: Each phase has the expected result
+        env:
+          GOT: ${{ steps.quality.outputs.format-result }},${{ steps.quality.outputs.lint-result }},${{ steps.quality.outputs.test-result }}
+          WANT: ${{ matrix.expect }}
+          OUTCOME: ${{ steps.quality.outcome }}
+          VERSIONS: ${{ steps.quality.outputs.tool-versions }}
+          JUNIT: ${{ steps.quality.outputs.junit-path }}
+          LCOV: ${{ steps.quality.outputs.lcov-path }}
+        run: |
+          echo "format,lint,test"
+          echo "got  $GOT (step $OUTCOME)"
+          echo "want $WANT"
+          echo "tools: $VERSIONS"
+          [ "$GOT" = "$WANT" ]
+          case "$WANT" in
+            *failed*) [ "$OUTCOME" = "failure" ] ;;
+            *) [ "$OUTCOME" = "success" ] ;;
+          esac
+          # nextest writes JUnit whether the tests pass or fail.
+          # cargo-llvm-cov writes coverage only when they pass.
+          test -s "$JUNIT"
+          case "$WANT" in
+            *,passed) test -s "$LCOV" ;;
+          esac
+
+      - name: Findings
+        uses: ./.github/actions/findings-tests
+        with:
+          junit-path: ${{ steps.quality.outputs.junit-path }}
+          lcov-path: ${{ steps.quality.outputs.lcov-path }}
+          coverage-xml-path: ""
+          lint-log: ${{ steps.quality.outputs.lint-log }}
+          out-path: ${{ runner.temp }}/findings/rust-quality.md
+
+      - name: The findings name what failed
+        env:
+          FINDINGS: ${{ runner.temp }}/findings/rust-quality.md
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          cat "$FINDINGS"
+          if [ "$FIXTURE" = "rust-cargo-bad" ]; then
+            grep -q "0/1 tests passed" "$FINDINGS"
+            grep -q "greets_by_name" "$FINDINGS"
+            grep -q "would be reformatted by rustfmt" "$FINDINGS"
+            grep -q "needless_return\|unneeded .return. statement" "$FINDINGS"
+          else
+            grep -q "1/1 tests passed" "$FINDINGS"
+            grep -q "lines covered" "$FINDINGS"
+          fi
+
+      - id: audit
+        if: matrix.audit
+        uses: ./.github/actions/rust-audit
+        with:
+          working-directory: test-fixtures/${{ matrix.fixture }}
+          out-path: ${{ runner.temp }}/findings/rust-audit.md
+
+      - name: The audit ran and found nothing
+        if: matrix.audit
+        env:
+          STATUS: ${{ steps.audit.outputs.status }}
+          FINDINGS: ${{ runner.temp }}/findings/rust-audit.md
+        run: |
+          cat "$FINDINGS"
+          [ "$STATUS" = "clean" ]

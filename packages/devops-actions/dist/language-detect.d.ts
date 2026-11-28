@@ -4,7 +4,8 @@
  * Detects which languages a repository declares, and for Python which
  * package manager owns it, which interpreter version it pins, and which
  * CI phases its `pyproject.toml` actually configures. For the JVM it
- * reports the build tool and Java version, and for .NET the SDK version.
+ * reports the build tool and Java version, for .NET the SDK version, and
+ * for Rust the toolchain the repository pins.
  *
  * Consumed by the `detect-language` composite action, whose outputs gate
  * the per-language steps in the `quality` job of `ci.yml`.
@@ -13,8 +14,9 @@
  */
 import type { DotnetInfo } from "./dotnet-detect.js";
 import type { JvmInfo } from "./jvm-detect.js";
+import type { RustInfo } from "./rust-detect.js";
 import type { TomlDocument } from "./toml-lite.js";
-export type Language = "node" | "python" | "java" | "kotlin" | "csharp";
+export type Language = "node" | "python" | "rust" | "java" | "kotlin" | "csharp";
 export type PythonPackageManager = "pip" | "pipenv" | "poetry" | "uv";
 export type PythonLintTool = "black" | "flake8" | "pylint" | "ruff";
 export interface PythonInfo {
@@ -42,17 +44,22 @@ export interface DetectionResult {
     hasDotnet: boolean;
     /** Present only when `hasDotnet` is true. */
     dotnet?: DotnetInfo;
+    /** True when the directory holds a Cargo.toml, a package or a workspace. */
+    hasRust: boolean;
+    /** Present only when `hasRust` is true. */
+    rust?: RustInfo;
 }
 /**
  * Probe a repository root and report what it declares.
  *
- * Node and Python are read from manifests at the root. JVM and .NET
+ * Node, Python and Rust are read from manifests at the root. JVM and .NET
  * sources and project files usually sit below it, so those are found by a
  * bounded walk of the tree (see file-walk).
  *
  * @param root Absolute path to the repository root.
- * @param stopAt Highest folder to look in for a .NET global.json, usually
- *   the repository root when `root` is a subfolder. Defaults to `root`.
+ * @param stopAt Highest folder to look in for a .NET global.json or a Rust
+ *   toolchain file, usually the repository root when `root` is a
+ *   subfolder. Defaults to `root`.
  */
 export declare function detect(root: string, stopAt?: string): DetectionResult;
 /**
@@ -95,7 +102,7 @@ export declare function normaliseRequiresPython(specifier: string): string;
 /**
  * Render a detection result as GitHub Actions `key=value` output lines.
  * Every field is always emitted so a consuming step can read it without
- * first checking `has-python`, `has-jvm` or `has-dotnet`.
+ * first checking `has-python`, `has-jvm`, `has-dotnet` or `has-rust`.
  *
  * @param result Detection result.
  */

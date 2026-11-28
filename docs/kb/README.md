@@ -13,6 +13,7 @@ Quick reference for resolving CI failures from the devops-toolkit pipeline. Find
 | [Python Projects](python.md)                | quality, audit               | build, test       | Anything specific to a Python repository                         |
 | [JVM Projects](jvm.md)                      | jvm-quality, jvm-audit       | build, test, lint | Anything specific to a Kotlin or Java repository (Gradle, Maven) |
 | [.NET Projects](dotnet.md)                  | dotnet-quality, dotnet-audit | build, test, lint | Anything specific to a C# repository                             |
+| [Rust Projects](rust.md)                    | rust-quality, rust-audit     | lint, test        | Anything specific to a Rust repository (Cargo)                   |
 | [Security](security.md)                     | security, audit              | security          | Semgrep SAST findings, dependency advisories                     |
 | [Secrets](secrets.md)                       | security                     | secrets           | Gitleaks secret detection findings                               |
 | [Trunk](trunk.md)                           | trunk-check                  | lint              | Trunk-managed linter failures (shellcheck, yamllint, etc.)       |

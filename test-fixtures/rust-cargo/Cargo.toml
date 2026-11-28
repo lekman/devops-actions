@@ -1,0 +1,5 @@
+# A passing Rust workspace for the rust-quality and rust-audit actions. It
+# has no external dependencies, so it builds and audits offline.
+[workspace]
+members = ["crates/*"]
+resolver = "3"

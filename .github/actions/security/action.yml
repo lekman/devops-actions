@@ -23,8 +23,9 @@ inputs:
   languages:
     description: >-
       Comma-separated languages present in the repository, from the
-      detect-language action. python, java, kotlin and csharp each add
-      their Semgrep ruleset (p/python, p/java, p/kotlin, p/csharp) on top of
+      detect-language action. python, rust, java, kotlin and csharp each
+      add their Semgrep ruleset (p/python, p/rust, p/java, p/kotlin,
+      p/csharp) on top of
       `rulesets`. A repo with none of them gets exactly the rulesets it did
       before.
     required: false
@@ -85,7 +86,7 @@ runs:
         # is absent from the scanned tree, so an unused one costs a little
         # rule-loading time and changes no result.
         # One check per language, since a repository can hold several.
-        for lang_ruleset in python:p/python java:p/java kotlin:p/kotlin csharp:p/csharp; do
+        for lang_ruleset in python:p/python rust:p/rust java:p/java kotlin:p/kotlin csharp:p/csharp; do
           case ",$LANGUAGES," in
             *",${lang_ruleset%%:*},"*) CONFIGS="$CONFIGS --config ${lang_ruleset#*:}" ;;
           esac

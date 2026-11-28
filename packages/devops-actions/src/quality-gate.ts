@@ -22,6 +22,8 @@ const JOB_KB_PAGE: Record<string, string> = {
   "jvm-audit": "jvm.md",
   "dotnet-quality": "dotnet.md",
   "dotnet-audit": "dotnet.md",
+  "rust-quality": "rust.md",
+  "rust-audit": "rust.md",
   "trunk-check": "trunk.md",
   "infra-preview": "infra.md",
   deliver: "quality-gate.md",
@@ -47,6 +49,11 @@ const JOB_RELATED_KB: Record<string, Array<[string, string]>> = {
     ["lint.md", "Lint"],
   ],
   "dotnet-audit": [["security.md", "Security"]],
+  "rust-quality": [
+    ["tests.md", "Tests"],
+    ["lint.md", "Lint"],
+  ],
+  "rust-audit": [["security.md", "Security"]],
   "trunk-check": [
     ["lint.md", "Lint"],
     ["trunk.md", "Trunk"],
@@ -167,6 +174,8 @@ const JOB_LABEL: Record<string, string> = {
   "jvm-audit": "Security: JVM Dependency Audit",
   "dotnet-quality": "QA: .NET Build, Format, Test",
   "dotnet-audit": "Security: .NET Dependency Audit",
+  "rust-quality": "QA: Rust Format, Lint, Test",
+  "rust-audit": "Security: Rust Dependency Audit",
   "trunk-check": "QA: Linters, Static Code Analysis",
   "infra-preview": "IAC: Preview",
   deliver: "CI/CD: Continuous Delivery",
@@ -189,6 +198,10 @@ const JOB_HINT: Record<string, string> = {
     "dotnet build with analyzers and warnings as errors, dotnet format --verify-no-changes, dotnet test, and an 80% line coverage floor. The job summary shows which phase failed.",
   "dotnet-audit":
     "NuGet advisories from dotnet package list --vulnerable, direct and transitive. An audit that could not run reports as indeterminate, not as a pass.",
+  "rust-quality":
+    "cargo fmt --check, cargo clippy with warnings as errors, and the tests through cargo-nextest under cargo-llvm-cov for JUnit and LCOV. The job summary shows which phase failed.",
+  "rust-audit":
+    "Advisories from cargo-audit, reading Cargo.lock against the RustSec database. An audit that could not run reports as indeterminate, not as a pass.",
   "trunk-check":
     "Linters and static analysis (shellcheck, yamllint, markdownlint, actionlint, hadolint, checkov, osv-scanner, trufflehog, prettier).",
   "infra-preview": "Pulumi preview for infrastructure changes (Azure OIDC).",

@@ -70,7 +70,8 @@ export declare function sumJunit(xmls: readonly string[]): TestSummary | null;
 export declare function parseJunitFailures(xml: string): Finding[];
 /**
  * Parse lint output for error lines. Handles ESLint stylish, Biome, ruff,
- * black, and generic `file:line:col: error message` formats.
+ * black, rustfmt, rustc and clippy, and generic `file:line:col: error
+ * message` formats.
  *
  * The formats do not collide. The generic JS matcher requires a
  * .ts/.tsx/.js/.jsx extension, and the ruff matcher requires .py, so a

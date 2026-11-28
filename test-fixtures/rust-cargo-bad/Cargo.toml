@@ -1,0 +1,6 @@
+# A Rust workspace that breaks each rust-quality phase once: a formatting
+# difference, a clippy warning (an error under -D warnings) and a failing
+# test.
+[workspace]
+members = ["crates/*"]
+resolver = "3"

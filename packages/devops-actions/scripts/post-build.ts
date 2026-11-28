@@ -25,6 +25,7 @@ const actions: Record<string, string[]> = {
   "release-matrix": ["release-matrix.js"],
   "python-audit": ["findings-audit.js"],
   "jvm-audit": ["findings-audit.js"],
+  "rust-audit": ["findings-audit.js"],
   "dotnet-audit": [
     "findings-audit.js",
     "project-inspect.js",
@@ -37,6 +38,7 @@ const actions: Record<string, string[]> = {
     "file-walk.js",
     "jvm-detect.js",
     "dotnet-detect.js",
+    "rust-detect.js",
   ],
   "jvm-quality": [
     "project-inspect.js",

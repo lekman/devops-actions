@@ -1,0 +1,71 @@
+# Audits a Cargo project's locked dependencies against the RustSec advisory
+# database with cargo-audit, and writes a markdown summary for the gate in
+# the same shape python-audit writes.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - A Cargo.lock beside Cargo.toml. cargo-audit reads the lockfile, so no
+#     Rust toolchain is needed and nothing is built.
+#
+# cargo-audit is a prebuilt binary installed by taiki-e/install-action,
+# checked against the SHA-256 in its manifest, with the compile-from-source
+# fallback turned off. It fetches the advisory database from
+# github.com/rustsec/advisory-db, which needs no account or key.
+#
+# Every advisory counts, whatever its CVSS score, the same as pip-audit and
+# OSV-Scanner in the other audit actions. Informational advisories
+# (unmaintained, unsound, yanked) are warnings to cargo-audit and are not
+# counted. An audit that could not run is reported as indeterminate, never
+# as a pass.
+
+name: Rust Audit
+description: >-
+  Run cargo-audit against a Cargo.lock and write a markdown findings file.
+  Requires a prior checkout.
+
+inputs:
+  working-directory:
+    description: Directory holding Cargo.lock, repository-relative.
+    required: false
+    default: "."
+  out-path:
+    description: Absolute path to write the findings markdown to.
+    required: true
+  fail-on-vulnerability:
+    description: >-
+      Fail the step when advisories are found. Default "false": the gate
+      carries the verdict, the same as python-audit.
+    required: false
+    default: "false"
+  fail-on-indeterminate:
+    description: >-
+      Fail the step when the audit could not run at all. Default "true",
+      for the reason python-audit gives: an audit that never executed would
+      otherwise show as a green row.
+    required: false
+    default: "true"
+
+outputs:
+  status:
+    description: '"clean", "vulnerable", or "indeterminate".'
+    value: ${{ steps.audit.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cargo-audit
+      uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      with:
+        tool: cargo-audit@0.23.0
+        fallback: none
+
+    - name: Run cargo-audit
+      id: audit
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        OUT_PATH: ${{ inputs.out-path }}
+        FAIL_ON_VULN: ${{ inputs.fail-on-vulnerability }}
+        FAIL_ON_INDETERMINATE: ${{ inputs.fail-on-indeterminate }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/run.sh"'

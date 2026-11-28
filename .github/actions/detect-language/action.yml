@@ -1,8 +1,8 @@
 # Reports which languages the checked-out repository declares, and for
 # Python which package manager owns it, which interpreter it pins, and
 # which CI phases its pyproject.toml configures. For the JVM it reports the
-# build tool and the Java version, and for .NET the SDK version and the
-# test platform.
+# build tool and the Java version, for .NET the SDK version and the test
+# platform, and for Rust the toolchain the repository pins.
 #
 # Callers gate their per-language steps on these outputs, so a TypeScript
 # repo runs no Python steps and a Python repo runs no bun steps.
@@ -26,6 +26,11 @@
 # toolchain (`jvmToolchain(21)` or `JavaLanguageVersion.of(21)`), the Maven
 # compiler release (`maven.compiler.release`, `<release>`). A project that
 # pins none gets Java 17, and `jvm-version-source` reads "default".
+#
+# Rust is a Cargo.toml in the working directory. The toolchain is `rust`
+# under [tools] in a mise config or .tool-versions, else the channel in
+# rust-toolchain.toml or rust-toolchain, looked for in the working
+# directory and each folder above it up to the checkout root.
 
 name: Detect Language
 description: >-
@@ -112,6 +117,28 @@ outputs:
       "mtp" when global.json sets test.runner to Microsoft.Testing.Platform,
       else "vstest". Empty when no .NET project was detected.
     value: ${{ steps.detect.outputs.dotnet-test-runner }}
+  has-rust:
+    description: '"true" when Cargo.toml (a package or a workspace) is in the working directory.'
+    value: ${{ steps.detect.outputs.has-rust }}
+  rust-workspace:
+    description: '"true" when Cargo.toml declares a [workspace] table.'
+    value: ${{ steps.detect.outputs.rust-workspace }}
+  rust-has-lockfile:
+    description: '"true" when Cargo.lock sits beside Cargo.toml.'
+    value: ${{ steps.detect.outputs.rust-has-lockfile }}
+  rust-toolchain:
+    description: >-
+      Pinned toolchain, such as 1.100.0 or stable. Empty when the repository
+      pins none.
+    value: ${{ steps.detect.outputs.rust-toolchain }}
+  rust-toolchain-source:
+    description: >-
+      "mise", "rust-toolchain.toml" or "rust-toolchain": where rust-toolchain
+      came from. Empty when the repository pins none.
+    value: ${{ steps.detect.outputs.rust-toolchain-source }}
+  rust-toolchain-file:
+    description: The file the toolchain came from, relative to the checkout root.
+    value: ${{ steps.detect.outputs.rust-toolchain-file }}
 
 runs:
   using: composite

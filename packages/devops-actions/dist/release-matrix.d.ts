@@ -38,7 +38,7 @@ export interface ReleaseMatrixEntry {
     /** Target registry from package.json `publishConfig.registry`, if set. */
     registry?: string;
 }
-export type Language = "node" | "python" | "docker" | "helm" | "kotlin" | "powershell" | "unknown";
+export type Language = "node" | "python" | "rust" | "docker" | "helm" | "kotlin" | "powershell" | "unknown";
 export interface ReleaseMatrix {
     entries: ReleaseMatrixEntry[];
     /** Paths that were released but are not listed in the config. */

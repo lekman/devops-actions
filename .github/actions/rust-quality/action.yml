@@ -1,0 +1,162 @@
+# Runs format, lint and test for a Cargo package or workspace, and writes
+# JUnit XML, LCOV coverage and the lint output for the quality gate.
+#
+# Prerequisites:
+#   - The repository must already be checked out (actions/checkout).
+#   - detect-language, for toolchain-source.
+#
+# Phases, each run even when an earlier one fails (see run.sh):
+#
+#   Format  cargo fmt --all --check
+#   Lint    cargo clippy --workspace --all-targets --locked -- -D warnings
+#   Test    cargo-nextest under cargo-llvm-cov, which writes <dir>/junit.xml
+#           and <dir>/coverage/lcov.info, then the doctests with cargo test
+#
+# The toolchain is the one the repository pins, never one this action
+# chooses: rust under [tools] in a mise config, or rust-toolchain.toml. mise
+# installs it in both cases; for rust-toolchain.toml it reads the file as an
+# idiomatic version file. A repository that pins neither fails here, the same
+# as setup-runtime fails for a repository that declares no toolchain.
+#
+# cargo-nextest and cargo-llvm-cov are prebuilt binaries installed by
+# taiki-e/install-action, which checks each download against the SHA-256 in
+# its manifest. The fallback that would compile them from source without
+# that check is turned off.
+
+name: Rust Quality
+description: >-
+  cargo fmt, cargo clippy with warnings as errors, and the tests through
+  cargo-nextest with LCOV coverage and JUnit XML. Requires a prior checkout.
+
+inputs:
+  working-directory:
+    description: Directory holding Cargo.toml, repository-relative.
+    required: false
+    default: "."
+  toolchain-source:
+    description: >-
+      Where the repository pins its toolchain: "mise", "rust-toolchain.toml"
+      or "rust-toolchain". From the detect-language action. Empty fails the
+      step, because there is no toolchain to install.
+    required: true
+  mise-version:
+    description: Pin mise itself. Empty uses the latest release.
+    required: false
+    default: ""
+  cache:
+    description: >-
+      Restore and save the cargo registry, git dependencies and the target
+      directory with actions/cache. Set "false" to build from cold.
+    required: false
+    default: "true"
+  findings-dir:
+    description: >-
+      Directory to write rust-lint.log (rustfmt and clippy) and
+      rust-test.log into, for findings-tests.
+    required: true
+
+outputs:
+  format-result:
+    description: '"passed" or "failed": cargo fmt --all --check.'
+    value: ${{ steps.run.outputs.format-result }}
+  lint-result:
+    description: '"passed" or "failed": cargo clippy with -D warnings.'
+    value: ${{ steps.run.outputs.lint-result }}
+  test-result:
+    description: '"passed" or "failed": the tests and the doctests.'
+    value: ${{ steps.run.outputs.test-result }}
+  junit-path:
+    description: Absolute path of the JUnit XML report. Empty when none was written.
+    value: ${{ steps.run.outputs.junit-path }}
+  lcov-path:
+    description: Absolute path of the LCOV coverage report. Empty when none was written.
+    value: ${{ steps.run.outputs.lcov-path }}
+  lint-log:
+    description: Path of the rustfmt and clippy log. Pass to findings-tests' lint-log.
+    value: ${{ steps.run.outputs.lint-log }}
+  test-log:
+    description: Path of the test log.
+    value: ${{ steps.run.outputs.test-log }}
+  tool-versions:
+    description: Versions that ran, e.g. "rustc 1.100.0, cargo-nextest 0.9.152, cargo-llvm-cov 0.9.1".
+    value: ${{ steps.run.outputs.tool-versions }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the pinned toolchain
+      shell: bash
+      env:
+        TOOLCHAIN_SOURCE: ${{ inputs.toolchain-source }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        case "$TOOLCHAIN_SOURCE" in
+          mise) ;;
+          rust-toolchain.toml | rust-toolchain)
+            # mise reads rust-toolchain.toml only when the rust idiomatic
+            # version file is turned on. The setting goes to the job's
+            # environment, which this job uses for Rust alone.
+            echo "MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS=rust" >> "$GITHUB_ENV"
+            ;;
+          *)
+            echo "::error title=Rust Quality::no pinned Rust toolchain for '$WORKING_DIRECTORY'. Add rust-toolchain.toml with a [toolchain] channel, or rust under [tools] in mise.toml."
+            exit 1
+            ;;
+        esac
+
+    # The toolchain itself is rustup's, under RUSTUP_HOME, which the mise
+    # cache does not hold, so that cache would restore nothing of use.
+    - name: Install the Rust toolchain
+      uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+      with:
+        version: ${{ inputs.mise-version }}
+        working_directory: ${{ inputs.working-directory }}
+        install_args: rust
+        cache: false
+
+    - name: Add rustfmt, clippy and llvm-tools
+      id: toolchain
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # Components go to the active toolchain, the pinned one. Listed in
+        # rust-toolchain.toml or not, the phases below need all three.
+        rustup component add rustfmt clippy llvm-tools-preview
+        rustc --version
+        cargo --version
+        echo "rustc=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+        echo "cargo-home=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_OUTPUT"
+        echo "target-dir=${CARGO_TARGET_DIR:-$PWD/target}" >> "$GITHUB_OUTPUT"
+
+    # Keyed on the compiler and Cargo.lock. A new lockfile restores the
+    # newest cache for the same compiler and builds only what changed.
+    - name: Cache the cargo registry and target directory
+      if: inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ steps.toolchain.outputs.cargo-home }}/registry/index
+          ${{ steps.toolchain.outputs.cargo-home }}/registry/cache
+          ${{ steps.toolchain.outputs.cargo-home }}/git/db
+          ${{ steps.toolchain.outputs.target-dir }}
+        key: rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rustc }}-${{ hashFiles(format('{0}/Cargo.lock', inputs.working-directory)) }}
+        restore-keys: |
+          rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rustc }}-
+
+    - name: Install cargo-nextest and cargo-llvm-cov
+      uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      with:
+        tool: cargo-nextest@0.9.152,cargo-llvm-cov@0.9.1
+        fallback: none
+
+    - name: Format, lint, test
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FINDINGS_DIR: ${{ inputs.findings-dir }}
+        ACTION_PATH: ${{ github.action_path }}
+        TARGET_DIR: ${{ steps.toolchain.outputs.target-dir }}
+      run: '"$ACTION_PATH/run.sh"'

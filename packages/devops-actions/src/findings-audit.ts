@@ -1,13 +1,14 @@
 /**
  * Copyright (c) Tobias Lekman. All rights reserved.
  *
- * Findings producer for the `audit` jobs. Parses the JSON of three
+ * Findings producer for the `audit` jobs. Parses the JSON of four
  * dependency auditors into one markdown summary for embedding inside the
  * Security Gate <details> body:
  *
  *   pip-audit      Python (python-audit)
  *   osv-scanner    Gradle lockfiles and Maven poms (jvm-audit)
  *   dotnet         `dotnet package list --vulnerable` (dotnet-audit)
+ *   cargo-audit    Cargo.lock against the RustSec database (rust-audit)
  *
  * Three outcomes, kept distinct on purpose:
  *
@@ -472,6 +473,86 @@ function toOutcome(
   };
 }
 
+// ---- cargo-audit ----
+
+/**
+ * Turn a RustSec `patched` requirement such as ">= 1.2.3" into the version
+ * it names. Anything else (a caret range, two bounds) is kept as written.
+ */
+function cargoFixVersion(patched: string[]): string | undefined {
+  const first = patched[0]?.trim();
+  if (!first) return undefined;
+  const bare = first.match(/^>=\s*(\d+(?:\.\d+)*\S*)$/);
+  return bare ? bare[1] : first;
+}
+
+/**
+ * Parse `cargo audit --json` output.
+ *
+ * Read against the report types of rustsec at cargo-audit/v0.23.0
+ * (rustsec/src/report.rs). `lockfile.dependency-count` is the number of
+ * packages in Cargo.lock, and `vulnerabilities.list` holds one entry per
+ * advisory and affected package. Informational advisories (unmaintained,
+ * unsound, yanked) are `warnings`, which cargo-audit itself does not fail
+ * on, so they are not counted here either.
+ *
+ * @param json Raw stdout from cargo-audit.
+ */
+export function parseCargoAudit(json: string): AuditOutcome {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return {
+      status: "indeterminate",
+      reason: "cargo-audit output was not valid JSON",
+    };
+  }
+  const report = asRecord(parsed);
+  const list = asRecord(report?.vulnerabilities)?.list;
+  const count = asRecord(report?.lockfile)?.["dependency-count"];
+  if (!Array.isArray(list) || typeof count !== "number") {
+    return {
+      status: "indeterminate",
+      reason: "cargo-audit output carried no vulnerability list",
+    };
+  }
+
+  const advisories: Advisory[] = [];
+  const seen = new Set<string>();
+  for (const entry of list) {
+    const record = asRecord(entry);
+    const advisory = asRecord(record?.advisory);
+    const pkg = asRecord(record?.package);
+    const id = asString(advisory?.id);
+    const name = asString(pkg?.name) ?? asString(advisory?.package);
+    if (!id || !name) continue;
+    const version = asString(pkg?.version) ?? "";
+    const key = `${name}@${version}:${id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    advisories.push({
+      package: name,
+      version,
+      id,
+      fixVersion: cargoFixVersion(
+        asStringArray(asRecord(record?.versions)?.patched),
+      ),
+      description: truncate(asString(advisory?.title) ?? id),
+      url: asString(advisory?.url) ?? `https://rustsec.org/advisories/${id}`,
+    });
+  }
+
+  if (count === 0) {
+    return {
+      status: "indeterminate",
+      reason: "cargo-audit found no packages in Cargo.lock",
+    };
+  }
+  return toOutcome(advisories, count);
+}
+
 // ---- Formatting ----
 
 /**
@@ -523,12 +604,14 @@ export function formatAuditFindings(outcome: AuditOutcome): string {
 
 // ---- CLI ----
 
-export type AuditFormat = "pip-audit" | "osv-scanner" | "dotnet";
+export type AuditFormat =
+  "pip-audit" | "osv-scanner" | "dotnet" | "cargo-audit";
 
 const TOOL_NAMES: Record<AuditFormat, string> = {
   "pip-audit": "pip-audit",
   "osv-scanner": "osv-scanner",
   dotnet: "dotnet package list",
+  "cargo-audit": "cargo-audit",
 };
 
 /**
@@ -551,6 +634,7 @@ export function readAuditResult(
   try {
     const json = readFileSync(jsonPath, "utf8");
     if (format === "osv-scanner") return parseOsvScanner(json);
+    if (format === "cargo-audit") return parseCargoAudit(json);
     if (format === "dotnet") {
       const all =
         allJsonPath && existsSync(allJsonPath)
@@ -585,7 +669,7 @@ function main(): void {
   const formatArg = args.get("format") ?? "pip-audit";
   if (!(formatArg in TOOL_NAMES)) {
     console.error(
-      `findings-audit: --format must be pip-audit, osv-scanner or dotnet, got '${formatArg}'`,
+      `findings-audit: --format must be pip-audit, osv-scanner, dotnet or cargo-audit, got '${formatArg}'`,
     );
     process.exit(1);
   }
