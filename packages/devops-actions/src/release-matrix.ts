@@ -50,7 +50,14 @@ export interface ReleaseMatrixEntry {
 }
 
 export type Language =
-  "node" | "python" | "docker" | "helm" | "kotlin" | "powershell" | "unknown";
+  | "node"
+  | "python"
+  | "rust"
+  | "docker"
+  | "helm"
+  | "kotlin"
+  | "powershell"
+  | "unknown";
 
 export interface ReleaseMatrix {
   entries: ReleaseMatrixEntry[];
@@ -204,6 +211,10 @@ function detectLanguage(dir: string): Language {
   ) {
     return "python";
   }
+  // A crate is released by release-please (release-type rust, with the
+  // cargo-workspace plugin) and never published from here, so it is
+  // reported as rust and stays out of the npm publish steps.
+  if (existsSync(resolve(dir, "Cargo.toml"))) return "rust";
   if (
     existsSync(resolve(dir, "Chart.yaml")) ||
     existsSync(resolve(dir, "Chart.yml")) ||

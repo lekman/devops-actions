@@ -1,0 +1,17 @@
+# Nextest defaults for rust-quality, passed with --tool-config-file. A
+# repository's own .config/nextest.toml takes precedence over every value
+# here, including a [profile.devops-ci] it defines itself.
+
+[profile.devops-ci]
+# Run every test, so one failure does not hide the next.
+fail-fast = false
+# Show the output of failing tests in the log, not of passing ones.
+failure-output = "immediate-final"
+success-output = "never"
+
+[profile.devops-ci.junit]
+# Relative to <target-dir>/nextest/devops-ci/. run.sh copies it to the
+# project folder as junit.xml.
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true

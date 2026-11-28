@@ -1,13 +1,14 @@
 /**
  * Copyright (c) Tobias Lekman. All rights reserved.
  *
- * Findings producer for the `audit` jobs. Parses the JSON of three
+ * Findings producer for the `audit` jobs. Parses the JSON of four
  * dependency auditors into one markdown summary for embedding inside the
  * Security Gate <details> body:
  *
  *   pip-audit      Python (python-audit)
  *   osv-scanner    Gradle lockfiles and Maven poms (jvm-audit)
  *   dotnet         `dotnet package list --vulnerable` (dotnet-audit)
+ *   cargo-audit    Cargo.lock against the RustSec database (rust-audit)
  *
  * Three outcomes, kept distinct on purpose:
  *
@@ -98,13 +99,26 @@ export declare function parseOsvScanner(json: string): AuditOutcome;
  */
 export declare function parseDotnetPackageList(vulnerableJson: string, allJson?: string): AuditOutcome;
 /**
+ * Parse `cargo audit --json` output.
+ *
+ * Read against the report types of rustsec at cargo-audit/v0.23.0
+ * (rustsec/src/report.rs). `lockfile.dependency-count` is the number of
+ * packages in Cargo.lock, and `vulnerabilities.list` holds one entry per
+ * advisory and affected package. Informational advisories (unmaintained,
+ * unsound, yanked) are `warnings`, which cargo-audit itself does not fail
+ * on, so they are not counted here either.
+ *
+ * @param json Raw stdout from cargo-audit.
+ */
+export declare function parseCargoAudit(json: string): AuditOutcome;
+/**
  * Render an audit outcome as markdown for the gate comment.
  *
  * @param outcome Parsed audit result.
  * @returns Markdown, never empty — an audit that did not run still reports.
  */
 export declare function formatAuditFindings(outcome: AuditOutcome): string;
-export type AuditFormat = "pip-audit" | "osv-scanner" | "dotnet";
+export type AuditFormat = "pip-audit" | "osv-scanner" | "dotnet" | "cargo-audit";
 /**
  * Read an auditor's result file into an outcome. A missing or unreadable
  * file is indeterminate, never clean.

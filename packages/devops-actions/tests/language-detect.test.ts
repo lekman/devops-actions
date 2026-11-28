@@ -307,6 +307,12 @@ describe("formatOutputs", () => {
         "has-dotnet=false",
         "dotnet-version=",
         "dotnet-test-runner=",
+        "has-rust=false",
+        "rust-workspace=false",
+        "rust-has-lockfile=false",
+        "rust-toolchain=",
+        "rust-toolchain-source=",
+        "rust-toolchain-file=",
         "",
       ].join("\n"),
     );

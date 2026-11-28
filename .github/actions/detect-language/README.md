@@ -2,7 +2,7 @@
 
 Reports which languages a repository declares, and the setup each one
 needs: the Python package manager and phases, the JVM build tool and Java
-version, and the .NET SDK version and test platform. Callers gate their
+version, the .NET SDK version and test platform, and the Rust toolchain. Callers gate their
 per-language steps and jobs on these outputs.
 
 ```yaml
@@ -17,7 +17,7 @@ per-language steps and jobs on these outputs.
 
 | Output               | Example            | Meaning                                                                                 |
 | -------------------- | ------------------ | --------------------------------------------------------------------------------------- |
-| `languages`          | `node,kotlin`      | Detected languages, in the order node, python, java, kotlin, csharp                     |
+| `languages`          | `node,kotlin`      | Detected languages, in the order node, python, rust, java, kotlin, csharp               |
 | `has-node`           | `true`             | `package.json` at the root                                                              |
 | `has-python`         | `false`            | `pyproject.toml` or `setup.py` at the root                                              |
 | `python-*`           |                    | See `action.yml`. Unchanged by the JVM and .NET outputs                                 |
@@ -28,8 +28,10 @@ per-language steps and jobs on these outputs.
 | `has-dotnet`         | `true`             | A `.sln`, `.slnx`, `.csproj`, `.fsproj` or `.vbproj` at or below the root               |
 | `dotnet-version`     | `10.0.100`         | `global.json`'s `sdk.version`, else `<major>.<minor>.x` of the newest `TargetFramework` |
 | `dotnet-test-runner` | `mtp`              | `mtp` when `global.json` opts in to the Microsoft Testing Platform, else `vstest`       |
+| `has-rust`           | `true`             | `Cargo.toml` at the root, a package or a workspace                                      |
+| `rust-*`             |                    | Workspace, lockfile and toolchain. See [Rust Toolchain](#rust-toolchain)                |
 
-`node` and `python` come from manifests at the root. `java`, `kotlin` and
+`node`, `python` and `rust` come from manifests at the root. `java`, `kotlin` and
 `csharp` come from `.java`, `.kt` and `.cs` sources anywhere below it. A
 Kotlin DSL build script (`.kts`) alone does not make a project Kotlin. The
 walk skips build output and dependency folders (`build`, `target`, `bin`,
@@ -61,3 +63,28 @@ one, the newest `TargetFramework` or `TargetFrameworks` value across the
 project files and `Directory.Build.props` gives the channel (`net10.0`
 gives `10.0.x`). .NET Framework and .NET Standard targets name no SDK and
 are skipped.
+
+## Rust Toolchain
+
+The toolchain comes from the repository. In each folder from the working
+directory up to the checkout root, first match wins:
+
+1. `rust` under `[tools]` in `mise.toml`, `.mise.toml` or `mise/config.toml`,
+   or a `rust` line in `.tool-versions` (`rust-toolchain-source` reads
+   `mise`)
+2. `[toolchain] channel` in `rust-toolchain.toml`
+3. the legacy `rust-toolchain` file, as TOML or a bare channel
+
+mise is checked first because mise itself prefers an explicit config over
+`rust-toolchain.toml` when both name a version. A project that pins none
+reports empty `rust-toolchain` and `rust-toolchain-source`, and the action
+logs a warning. `rust-quality` then fails, as `setup-runtime` does for a
+repository that declares no toolchain.
+
+| Output                  | Example               | Meaning                                         |
+| ----------------------- | --------------------- | ----------------------------------------------- |
+| `rust-workspace`        | `true`                | `Cargo.toml` has a `[workspace]` table          |
+| `rust-has-lockfile`     | `true`                | `Cargo.lock` beside `Cargo.toml`                |
+| `rust-toolchain`        | `1.100.0`             | The pinned channel or version                   |
+| `rust-toolchain-source` | `rust-toolchain.toml` | `mise`, `rust-toolchain.toml`, `rust-toolchain` |
+| `rust-toolchain-file`   | `rust-toolchain.toml` | The file it came from, from the checkout root   |

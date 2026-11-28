@@ -436,3 +436,7 @@ temp.md
 # Test coverage and reports (regenerated on every run)
 /junit.xml
 /coverage/
+# Rust fixture build output and reports
+/test-fixtures/*/target/
+/test-fixtures/*/junit.xml
+/test-fixtures/*/coverage/

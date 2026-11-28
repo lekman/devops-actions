@@ -171,7 +171,8 @@ export function parseJunitFailures(xml: string): Finding[] {
 
 /**
  * Parse lint output for error lines. Handles ESLint stylish, Biome, ruff,
- * black, and generic `file:line:col: error message` formats.
+ * black, rustfmt, rustc and clippy, and generic `file:line:col: error
+ * message` formats.
  *
  * The formats do not collide. The generic JS matcher requires a
  * .ts/.tsx/.js/.jsx extension, and the ruff matcher requires .py, so a
@@ -190,6 +191,39 @@ export function parseLintLog(log: string): Finding[] {
     // two ways to split each space, which is quadratic on a line of
     // spaces (CodeQL js/polynomial-redos). The log is tool output, but
     // the parser should not be the slow part of a red run.
+    // rustfmt --check: `Diff in /work/src/lib.rs:12:`, or the older
+    // `Diff in /work/src/lib.rs at line 12:`.
+    const rustfmt = line.match(/^Diff in (\S+\.rs)(?::(\d+):| at line (\d+):)/);
+    if (rustfmt) {
+      findings.push({
+        file: `${rustfmt[1]}:${rustfmt[2] ?? rustfmt[3]}`,
+        message: "would be reformatted by rustfmt",
+        level: "error",
+      });
+      continue;
+    }
+
+    // rustc and clippy: a level line, then the location on the next line.
+    //   error: unused variable: `x`
+    //     --> src/lib.rs:3:9
+    // Summary lines (`error: could not compile ...`) have no location line
+    // and are skipped.
+    const rustc = line.match(
+      /^(error|warning)(?:\[[A-Za-z0-9_:]+\])?: (\S.*)$/,
+    );
+    if (rustc) {
+      const at = lines[i + 1]?.match(/^\s*--> (\S+\.rs):(\d+):(\d+)/);
+      if (at) {
+        findings.push({
+          file: `${at[1]}:${at[2]}:${at[3]}`,
+          message: rustc[2].trim(),
+          level: rustc[1] as "error" | "warning",
+        });
+        i++;
+        continue;
+      }
+    }
+
     // ruff: `src/app.py:12:5: F401 [*] `os` imported but unused`
     const ruff = line.match(
       /^(\S+\.py):(\d+):(\d+):\s+([A-Z]+\d+)\s+(?:\[\*\]\s+)?(\S.*)$/,

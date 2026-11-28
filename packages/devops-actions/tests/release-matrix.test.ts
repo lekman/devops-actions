@@ -234,6 +234,36 @@ describe("buildReleaseMatrix", () => {
     expect(m.entries[0].language).toBe("docker");
     expect(m.entries[0].publishable).toBe(false);
   });
+
+  test("a Cargo crate is rust and never publishable", () => {
+    mkdirSync(resolve(repoRoot, "crates/vectors"), { recursive: true });
+    writeFileSync(
+      resolve(repoRoot, "crates/vectors/Cargo.toml"),
+      '[package]\nname = "vectors"\nversion = "0.1.0"\n',
+    );
+    const m = buildReleaseMatrix({
+      releaseOutputs: {
+        releases_created: "true",
+        "crates/vectors--release_created": "true",
+        "crates/vectors--tag_name": "vectors-rs-v0.1.0",
+        "crates/vectors--version": "0.1.0",
+      },
+      configContents: JSON.stringify({
+        plugins: ["cargo-workspace"],
+        packages: {
+          "crates/vectors": { "release-type": "rust", component: "vectors-rs" },
+        },
+      }),
+      repoRoot,
+    });
+    expect(m.entries[0]).toMatchObject({
+      name: "vectors-rs",
+      language: "rust",
+      releaseType: "rust",
+      publishable: false,
+      hasBuild: false,
+    });
+  });
 });
 
 describe("parseNameFromTag", () => {

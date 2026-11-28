@@ -16,7 +16,7 @@ Call an action directly from a job, pinned to a commit SHA:
 ```
 
 Each action's `action.yml` lists its inputs, outputs and what it needs before
-it runs (usually a checkout). The JVM and .NET actions, and
+it runs (usually a checkout). The JVM, .NET and Rust actions, and
 `detect-language`, also have a `README.md` beside their `action.yml`.
 
 ## Actions
@@ -25,7 +25,7 @@ it runs (usually a checkout). The JVM and .NET actions, and
 | -------------------- | -------------------------------------------------------------------------------------------------- |
 | `branch-maintenance` | Finds stale or conflicted pull request branches, then updates them or comments                     |
 | `change-detection`   | Detects file changes with configurable path filters                                                |
-| `detect-language`    | Detects the languages a repository declares, its Python, JVM and .NET setup                        |
+| `detect-language`    | Detects the languages a repository declares, its Python, JVM, .NET and Rust setup                  |
 | `dotnet-audit`       | Runs the .NET SDK's package audit and writes a findings file                                       |
 | `dotnet-quality`     | Builds with analyzers and warnings as errors, checks formatting, tests with an 80% coverage floor  |
 | `drift-matrix`       | Lists release-please versions missing from the package registry, as a matrix                       |
@@ -41,6 +41,8 @@ it runs (usually a checkout). The JVM and .NET actions, and
 | `quality-gate`       | Evaluates the results of earlier jobs, fails if a required one failed, and posts the PR comment    |
 | `release-matrix`     | Turns release-please outputs into a matrix of released packages                                    |
 | `review-skip`        | Decides whether a pull request needs a full code review                                            |
+| `rust-audit`         | Runs cargo-audit on Cargo.lock against the RustSec database and writes a findings file             |
+| `rust-quality`       | cargo fmt, cargo clippy with warnings as errors, and the tests with JUnit and LCOV reports         |
 | `security`           | Runs Semgrep and Gitleaks, installing either when the runner lacks it                              |
 | `setup-runtime`      | Installs the toolchain the repository pins (mise, `.tool-versions`, `.node-version`), with cache   |
 | `trunk`              | Runs Trunk-managed linters                                                                         |
@@ -64,7 +66,7 @@ bun run build   # then commit the changed dist/ files
 
 CI fails when `dist/` differs from a fresh build.
 
-CI also runs `detect-language`, the JVM and .NET quality and audit actions
+CI also runs `detect-language`, the JVM, .NET and Rust quality and audit actions
 and the security action from the checkout against small projects in
 [test-fixtures](test-fixtures/). Each passing project must pass, and each
 deliberately broken one (`*-bad`) must fail in exactly the phases it
